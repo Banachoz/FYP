@@ -3,7 +3,7 @@ import cv2
 import mediapipe as mp
 import streamlit as st
 
-from core.angle_calculator import avg_knee_angle, tracked_y_for_exercise, torso_angle
+from core.angle_calculator import avg_knee_angle, tracked_y_for_exercise, torso_angle, signed_torso_angle
 from core.phase_detector import run_fsm
 import exercises.squat as _squat
 from ui.overlay import (
@@ -267,10 +267,17 @@ def _init_state():
         calib_peak=0.0,
         calib_peak_torso=0.0,
         calib_peak_knee=180.0,
+        calib_peak_signed_torso=0.0,
         calib_torso_angles=[],
         calib_knee_angles=[],
+        calib_signed_torso_angles=[],
+        calib_standing_signed_torso_angles=[],
         calib_torso_angle=None,
         calib_knee_angle=None,
+        calib_signed_torso_angle=None,
+        calib_standing_signed_torso_angle=None,
+        last_signed_torso_val=0.0,
+        completed_rep_label="",
         calib_just_completed=False,
         feedback="Position yourself laterally to the camera and begin",
         feedback_type="neutral",
@@ -281,6 +288,10 @@ def _init_state():
         knee_angle_disp=0.0,
         prev_tracked_y=0.0,
         standing_tracked_y=0.0,
+        feedback_hold_until=0.0,
+        held_feedback="",
+        current_rep_errors=[],
+        rep_log=[],
     )
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -300,12 +311,19 @@ def _pack_state():
         "calib_depths":        ss.calib_depths,
         "calib_depth":         ss.calib_depth,
         "calib_peak":          ss.calib_peak,
-        "calib_peak_torso":    ss.calib_peak_torso,
-        "calib_peak_knee":     ss.calib_peak_knee,
-        "calib_torso_angles":  ss.calib_torso_angles,
-        "calib_knee_angles":   ss.calib_knee_angles,
-        "calib_torso_angle":   ss.calib_torso_angle,
-        "calib_knee_angle":    ss.calib_knee_angle,
+        "calib_peak_torso":          ss.calib_peak_torso,
+        "calib_peak_knee":           ss.calib_peak_knee,
+        "calib_peak_signed_torso":   ss.calib_peak_signed_torso,
+        "calib_torso_angles":        ss.calib_torso_angles,
+        "calib_knee_angles":         ss.calib_knee_angles,
+        "calib_signed_torso_angles":          ss.calib_signed_torso_angles,
+        "calib_standing_signed_torso_angles": ss.calib_standing_signed_torso_angles,
+        "calib_torso_angle":                  ss.calib_torso_angle,
+        "calib_knee_angle":                   ss.calib_knee_angle,
+        "calib_signed_torso_angle":           ss.calib_signed_torso_angle,
+        "calib_standing_signed_torso_angle":  ss.calib_standing_signed_torso_angle,
+        "last_signed_torso_val":              ss.last_signed_torso_val,
+        "completed_rep_label":                ss.completed_rep_label,
         "feedback":            ss.feedback,
         "feedback_type":       ss.feedback_type,
         "depth_ratio":         ss.depth_ratio,
@@ -321,16 +339,29 @@ def _unpack_state(result):
     ss.calib_depths         = result["calib_depths"]
     ss.calib_depth          = result["calib_depth"]
     ss.calib_peak           = result["calib_peak"]
-    ss.calib_peak_torso     = result["calib_peak_torso"]
-    ss.calib_peak_knee      = result["calib_peak_knee"]
-    ss.calib_torso_angles   = result["calib_torso_angles"]
-    ss.calib_knee_angles    = result["calib_knee_angles"]
-    ss.calib_torso_angle    = result["calib_torso_angle"]
-    ss.calib_knee_angle     = result["calib_knee_angle"]
+    ss.calib_peak_torso          = result["calib_peak_torso"]
+    ss.calib_peak_knee           = result["calib_peak_knee"]
+    ss.calib_peak_signed_torso   = result["calib_peak_signed_torso"]
+    ss.calib_torso_angles        = result["calib_torso_angles"]
+    ss.calib_knee_angles         = result["calib_knee_angles"]
+    ss.calib_signed_torso_angles          = result["calib_signed_torso_angles"]
+    ss.calib_standing_signed_torso_angles = result["calib_standing_signed_torso_angles"]
+    ss.calib_torso_angle                  = result["calib_torso_angle"]
+    ss.calib_knee_angle                   = result["calib_knee_angle"]
+    ss.calib_signed_torso_angle           = result["calib_signed_torso_angle"]
+    ss.calib_standing_signed_torso_angle  = result["calib_standing_signed_torso_angle"]
+    ss.last_signed_torso_val              = result["last_signed_torso_val"]
+    ss.completed_rep_label                = result["completed_rep_label"]
     ss.feedback             = result["feedback"]
     ss.feedback_type        = result["feedback_type"]
     ss.prev_tracked_y       = result["prev_tracked_y"]
     ss.standing_tracked_y   = result["standing_tracked_y"]
+    # Append rep log entry here — fires before st.rerun() so Calib 3 is never missed
+    label = result["completed_rep_label"]
+    if label:
+        summary = f"{label} — {ss.current_rep_errors[0]}" if ss.current_rep_errors else f"{label} — Good form"
+        ss.rep_log.append(summary)
+        ss.current_rep_errors = []
     if result["needs_rerun"]:
         ss.calib_just_completed = True
         st.rerun()
@@ -339,11 +370,50 @@ def _unpack_state(result):
 # CALIBRATION COMPLETE DIALOG
 @st.dialog("Calibration Complete")
 def _calib_done_dialog():
-    st.markdown(f"**{ss.exercise}** baseline locked in — depth recorded at `{ss.calib_depth:.4f}`.")
-    st.markdown("Live form analysis will begin once you continue.")
-    if st.button("Begin Analysis", type="primary", use_container_width=True):
-        ss.calib_just_completed = False
-        st.rerun()
+    st.markdown(f"**{ss.exercise}** baseline locked in — depth `{ss.calib_depth:.4f}`.")
+    calib_entries = [e for e in ss.rep_log if e.startswith("Calib")][-3:]
+    if calib_entries:
+        st.markdown("**Calibration rep summary:**")
+        for entry in calib_entries:
+            is_good = "Good form" in entry
+            icon, color = ("✓", "green") if is_good else ("✗", "red")
+            st.markdown(f":{color}[{icon} {entry}]")
+        errors_in_calib = sum(1 for e in calib_entries if "Good form" not in e)
+        if errors_in_calib >= 2:
+            st.warning("Form errors in 2+ calibration reps — consider re-calibrating with better form.")
+    st.markdown("---")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("Re-calibrate", use_container_width=True):
+            ss.calib_mode                         = True
+            ss.calib_reps_collected               = 0
+            ss.calib_depths                       = []
+            ss.calib_depth                        = None
+            ss.calib_peak                         = 0.0
+            ss.calib_peak_torso                   = 0.0
+            ss.calib_peak_knee                    = 180.0
+            ss.calib_peak_signed_torso            = 0.0
+            ss.calib_torso_angles                 = []
+            ss.calib_knee_angles                  = []
+            ss.calib_signed_torso_angles          = []
+            ss.calib_standing_signed_torso_angles = []
+            ss.calib_torso_angle                  = None
+            ss.calib_knee_angle                   = None
+            ss.calib_signed_torso_angle           = None
+            ss.calib_standing_signed_torso_angle  = None
+            ss.last_signed_torso_val              = 0.0
+            ss.calib_just_completed               = False
+            ss.rep_count            = 0
+            ss.current_rep_errors   = []
+            ss.is_counting_down     = True
+            ss.countdown_start      = time.time()
+            st.rerun()
+    with col_b:
+        if st.button("Begin Analysis", type="primary", use_container_width=True):
+            ss.calib_just_completed = False
+            ss.rep_count            = 0
+            ss.current_rep_errors   = []
+            st.rerun()
 
 
 # SIDEBAR
@@ -423,6 +493,8 @@ with st.sidebar:
         help="% of calibrated depth required before ascending is accepted",
     )
     ss.depth_ratio = depth_pct / 100.0
+
+    rep_log_ph = st.empty()
 
 
 # MAIN LAYOUT
@@ -511,9 +583,10 @@ if webcam_active:
             if result.pose_landmarks:
                 lms = result.pose_landmarks.landmark
 
-                ty = tracked_y_for_exercise(lms, ss.exercise)
-                ka = avg_knee_angle(lms)
-                ta = torso_angle(lms)
+                ty  = tracked_y_for_exercise(lms, ss.exercise)
+                ka  = avg_knee_angle(lms)
+                ta  = torso_angle(lms)
+                sta = signed_torso_angle(lms)
                 ss.knee_angle_disp = round(ka, 1)
 
                 if ss.is_counting_down:
@@ -524,16 +597,23 @@ if webcam_active:
                         ss.is_counting_down = False
                         ss.feedback      = "Calibration active — perform 3 full reps"
                         ss.feedback_type = "calib"
-                        _unpack_state(run_fsm(_pack_state(), ty, ka, ta, ss.exercise))
+                        _unpack_state(run_fsm(_pack_state(), ty, ka, ta, ss.exercise, sta))
                 else:
-                    _unpack_state(run_fsm(_pack_state(), ty, ka, ta, ss.exercise))
+                    _unpack_state(run_fsm(_pack_state(), ty, ka, ta, ss.exercise, sta))
+
+                fsm_feedback_type = ss.feedback_type
 
                 # Form analysis (squat only for now — deadlift/OHP stubs still return [])
                 # Tier 1 Red Zone checks run always; Tier 2 baseline checks only after calibration.
                 has_error = False
                 if ss.exercise == "Squat":
                     baseline = (
-                        {"torso_angle": ss.calib_torso_angle, "knee_angle": ss.calib_knee_angle}
+                        {
+                            "torso_angle":                 ss.calib_torso_angle,
+                            "knee_angle":                  ss.calib_knee_angle,
+                            "signed_torso_angle":          ss.calib_signed_torso_angle,
+                            "signed_torso_standing_angle": ss.calib_standing_signed_torso_angle,
+                        }
                         if ss.calib_torso_angle is not None else None
                     )
                     errors = _squat.analyze(lms, baseline, ss.phase)
@@ -541,9 +621,20 @@ if webcam_active:
                         ss.feedback      = errors[0]["message"]
                         ss.feedback_type = "warn"
                         has_error        = True
+                        ss.feedback_hold_until = now + 1.5
+                        ss.held_feedback = ss.feedback
+                        if ss.feedback not in ss.current_rep_errors:
+                            ss.current_rep_errors.append(ss.feedback)
+
+                # Sticky hold: keep error visible if FSM would replace it with a neutral cue
+                if not has_error and now < ss.feedback_hold_until:
+                    if fsm_feedback_type == "neutral":
+                        ss.feedback      = ss.held_feedback
+                        ss.feedback_type = "warn"
+                        has_error        = True
 
                 frame = draw_pose(frame, result, has_error)
-                frame = draw_hud(frame, ss.phase, ss.rep_count, ka, ss.fps, w, h)
+                frame = draw_hud(frame, ss.phase, ss.rep_count, ka, ta, ss.fps, w, h)
 
                 if ss.calib_mode:
                     frame = draw_calibration_bar(frame, ss.calib_reps_collected, 3, w, h)
@@ -557,6 +648,22 @@ if webcam_active:
             metric_knee.metric("KNEE ANGLE",   f"{ss.knee_angle_disp:.1f}°")
             metric_depth.metric("CALIB DEPTH", f"{ss.calib_depth:.4f}" if ss.calib_depth else "—")
             metric_fps.metric("FPS",           f"{ss.fps:.0f}")
+
+            if ss.rep_log:
+                _lines = []
+                for _entry in ss.rep_log[-8:]:
+                    _good  = "Good form" in _entry
+                    _icon  = "fa-circle-check" if _good else "fa-triangle-exclamation"
+                    _color = "var(--ok)" if _good else "var(--danger)"
+                    _lines.append(
+                        f'<div class="status-row" style="margin-bottom:6px;color:{_color}">'
+                        f'<i class="fa-solid {_icon}" style="font-size:0.55rem"></i>{_entry}</div>'
+                    )
+                rep_log_ph.markdown(
+                    '<div class="section-label" style="margin-top:14px">'
+                    '<i class="fa-solid fa-list-check"></i> Rep Log</div>' + "".join(_lines),
+                    unsafe_allow_html=True,
+                )
 
             render_feedback()
             video_ph.image(rgb_out, channels="RGB", use_container_width=True)

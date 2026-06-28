@@ -1,3 +1,4 @@
+import math
 import numpy as np
 import mediapipe as mp
 
@@ -48,6 +49,18 @@ def torso_angle(landmarks):
     hip          = (lm_xy(landmarks, LEFT_HIP)       + lm_xy(landmarks, RIGHT_HIP))      / 2
     vertical_ref = np.array([hip[0], hip[1] - 1.0])
     return angle_between(shoulder, hip, vertical_ref)
+
+
+def signed_torso_angle(landmarks):
+    """Signed torso angle via atan2. 0° = upright. Sign convention:
+    positive when shoulder is to the right of hip, negative when to the left.
+    Comparing against a calibrated baseline (same sign convention) lets us detect
+    both excessive forward lean AND backward hyperextension regardless of camera orientation."""
+    sx = (landmarks[LEFT_SHOULDER].x + landmarks[RIGHT_SHOULDER].x) / 2
+    sy = (landmarks[LEFT_SHOULDER].y + landmarks[RIGHT_SHOULDER].y) / 2
+    hx = (landmarks[LEFT_HIP].x     + landmarks[RIGHT_HIP].x)      / 2
+    hy = (landmarks[LEFT_HIP].y     + landmarks[RIGHT_HIP].y)      / 2
+    return math.degrees(math.atan2(sx - hx, hy - sy))
 
 
 def avg_elbow_angle(landmarks):

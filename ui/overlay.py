@@ -32,13 +32,14 @@ def draw_pose(frame, result, has_error=False):
     return frame
 
 
-def draw_hud(frame, phase, rep_count, knee_angle_val, fps, w, h):
+def draw_hud(frame, phase, rep_count, knee_angle_val, torso_angle_val, fps, w, h):
     phase_col = _PHASE_COLOURS.get(phase, (180, 180, 180))
     cv2.line(frame, (0, 0), (w, 0), (232, 240, 0), 2)
-    cv2.putText(frame, phase,                   (12,  28), cv2.FONT_HERSHEY_DUPLEX,  0.70, phase_col,      1, cv2.LINE_AA)
-    cv2.putText(frame, f"REP {rep_count}",      (12,  54), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 205, 215), 1, cv2.LINE_AA)
-    cv2.putText(frame, f"KNEE {knee_angle_val:.0f} deg", (12, 76), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (90, 100, 120), 1, cv2.LINE_AA)
-    cv2.putText(frame, f"{fps:.0f} fps",        (w - 68, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (55, 62, 78), 1, cv2.LINE_AA)
+    cv2.putText(frame, phase,                              (12,  28), cv2.FONT_HERSHEY_DUPLEX,  0.70, phase_col,      1, cv2.LINE_AA)
+    cv2.putText(frame, f"REP {rep_count}",                (12,  54), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 205, 215), 1, cv2.LINE_AA)
+    cv2.putText(frame, f"KNEE  {knee_angle_val:.0f} deg", (12,  76), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (90, 100, 120),  1, cv2.LINE_AA)
+    cv2.putText(frame, f"TORSO {torso_angle_val:.0f} deg",(12,  94), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (90, 100, 120),  1, cv2.LINE_AA)
+    cv2.putText(frame, f"{fps:.0f} fps",                  (w - 68, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (55, 62, 78), 1, cv2.LINE_AA)
     return frame
 
 
