@@ -7,7 +7,8 @@ STANDING_KNEE_MIN = 150  # degrees — squat/deadlift "standing" check
 
 def run_fsm(state: dict, tracked_y: float, knee_angle: float,
             torso_angle_val: float, exercise: str,
-            signed_torso_val: float = 0.0) -> dict:
+            signed_torso_val: float = 0.0,
+            hip_ankle_offset_val: float = 0.0) -> dict:
     """
     Pure FSM update — no Streamlit imports, no side effects.
 
@@ -85,7 +86,8 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
             if knee_angle >= STANDING_KNEE_MIN:
                 s = _complete_rep(s)
 
-    s["last_signed_torso_val"] = signed_torso_val
+    s["last_signed_torso_val"]   = signed_torso_val
+    s["last_hip_ankle_offset"]   = hip_ankle_offset_val
     s["prev_tracked_y"] = tracked_y
     return s
 
@@ -106,6 +108,7 @@ def _complete_rep(s: dict) -> dict:
         s["calib_knee_angles"].append(s["calib_peak_knee"])
         s["calib_signed_torso_angles"].append(s["calib_peak_signed_torso"])
         s["calib_standing_signed_torso_angles"].append(s["last_signed_torso_val"])
+        s["calib_hip_ankle_offsets"].append(s["last_hip_ankle_offset"])
         s["calib_reps_collected"] += 1
         s["calib_peak"]              = 0.0
         s["calib_peak_torso"]        = 0.0
@@ -116,7 +119,8 @@ def _complete_rep(s: dict) -> dict:
             s["calib_torso_angle"]                = float(np.mean(s["calib_torso_angles"]))
             s["calib_knee_angle"]                 = float(np.mean(s["calib_knee_angles"]))
             s["calib_signed_torso_angle"]         = float(np.mean(s["calib_signed_torso_angles"]))
-            s["calib_standing_signed_torso_angle"]= float(np.mean(s["calib_standing_signed_torso_angles"]))
+            s["calib_standing_signed_torso_angle"] = float(np.mean(s["calib_standing_signed_torso_angles"]))
+            s["calib_hip_ankle_offset"]            = float(np.mean(s["calib_hip_ankle_offsets"]))
             s["calib_mode"]               = False
             s["feedback"]                 = "Calibration complete — system locked to your ROM"
             s["feedback_type"]            = "ok"

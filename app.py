@@ -1,9 +1,10 @@
+import base64
 import time
 import cv2
 import mediapipe as mp
 import streamlit as st
 
-from core.angle_calculator import avg_knee_angle, tracked_y_for_exercise, torso_angle, signed_torso_angle
+from core.angle_calculator import avg_knee_angle, tracked_y_for_exercise, torso_angle, signed_torso_angle, hip_ankle_offset
 from core.phase_detector import run_fsm
 import exercises.squat as _squat
 from ui.overlay import (
@@ -277,6 +278,9 @@ def _init_state():
         calib_signed_torso_angle=None,
         calib_standing_signed_torso_angle=None,
         last_signed_torso_val=0.0,
+        last_hip_ankle_offset=0.0,
+        calib_hip_ankle_offsets=[],
+        calib_hip_ankle_offset=None,
         completed_rep_label="",
         calib_just_completed=False,
         feedback="Position yourself laterally to the camera and begin",
@@ -292,6 +296,10 @@ def _init_state():
         held_feedback="",
         current_rep_errors=[],
         rep_log=[],
+        calib_ever_started=False,
+        countdown_duration=5,
+        rep_target=0,
+        set_just_completed=False,
     )
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -323,6 +331,9 @@ def _pack_state():
         "calib_signed_torso_angle":           ss.calib_signed_torso_angle,
         "calib_standing_signed_torso_angle":  ss.calib_standing_signed_torso_angle,
         "last_signed_torso_val":              ss.last_signed_torso_val,
+        "last_hip_ankle_offset":              ss.last_hip_ankle_offset,
+        "calib_hip_ankle_offsets":            ss.calib_hip_ankle_offsets,
+        "calib_hip_ankle_offset":             ss.calib_hip_ankle_offset,
         "completed_rep_label":                ss.completed_rep_label,
         "feedback":            ss.feedback,
         "feedback_type":       ss.feedback_type,
@@ -351,6 +362,9 @@ def _unpack_state(result):
     ss.calib_signed_torso_angle           = result["calib_signed_torso_angle"]
     ss.calib_standing_signed_torso_angle  = result["calib_standing_signed_torso_angle"]
     ss.last_signed_torso_val              = result["last_signed_torso_val"]
+    ss.last_hip_ankle_offset              = result["last_hip_ankle_offset"]
+    ss.calib_hip_ankle_offsets            = result["calib_hip_ankle_offsets"]
+    ss.calib_hip_ankle_offset             = result["calib_hip_ankle_offset"]
     ss.completed_rep_label                = result["completed_rep_label"]
     ss.feedback             = result["feedback"]
     ss.feedback_type        = result["feedback_type"]
@@ -359,7 +373,7 @@ def _unpack_state(result):
     # Append rep log entry here — fires before st.rerun() so Calib 3 is never missed
     label = result["completed_rep_label"]
     if label:
-        summary = f"{label} — {ss.current_rep_errors[0]}" if ss.current_rep_errors else f"{label} — Good form"
+        summary = f"{label} — {' · '.join(ss.current_rep_errors)}" if ss.current_rep_errors else f"{label} — Good form"
         ss.rep_log.append(summary)
         ss.current_rep_errors = []
     if result["needs_rerun"]:
@@ -367,10 +381,14 @@ def _unpack_state(result):
         st.rerun()
 
 
-# CALIBRATION COMPLETE DIALOG
-@st.dialog("Calibration Complete")
+# CALIBRATION COMPLETE — inline page (replaces @st.dialog to avoid Streamlit fragment close bug)
 def _calib_done_dialog():
-    st.markdown(f"**{ss.exercise}** baseline locked in — depth `{ss.calib_depth:.4f}`.")
+    st.markdown(
+        '<div class="fb fb-ok"><i class="fa-solid fa-circle-check"></i>'
+        f'CALIBRATION COMPLETE — {ss.exercise} baseline locked in</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
     calib_entries = [e for e in ss.rep_log if e.startswith("Calib")][-3:]
     if calib_entries:
         st.markdown("**Calibration rep summary:**")
@@ -382,6 +400,11 @@ def _calib_done_dialog():
         if errors_in_calib >= 2:
             st.warning("Form errors in 2+ calibration reps — consider re-calibrating with better form.")
     st.markdown("---")
+    rep_target_val = st.number_input(
+        "Target reps per set (0 = unlimited)",
+        min_value=0, max_value=200, value=ss.rep_target, step=1,
+        help="The system will pause and prompt you when you reach this count. Set 0 for no limit.",
+    )
     col_a, col_b = st.columns(2)
     with col_a:
         if st.button("Re-calibrate", use_container_width=True):
@@ -402,17 +425,61 @@ def _calib_done_dialog():
             ss.calib_signed_torso_angle           = None
             ss.calib_standing_signed_torso_angle  = None
             ss.last_signed_torso_val              = 0.0
+            ss.last_hip_ankle_offset              = 0.0
+            ss.calib_hip_ankle_offsets            = []
+            ss.calib_hip_ankle_offset             = None
             ss.calib_just_completed               = False
             ss.rep_count            = 0
             ss.current_rep_errors   = []
+            ss.rep_log              = []
+            ss.rep_target           = 0
             ss.is_counting_down     = True
             ss.countdown_start      = time.time()
+            ss.feedback             = f"Get into position — calibration starts in {ss.countdown_duration}s"
+            ss.feedback_type        = "calib"
             st.rerun()
     with col_b:
         if st.button("Begin Analysis", type="primary", use_container_width=True):
+            ss.rep_target           = rep_target_val
             ss.calib_just_completed = False
             ss.rep_count            = 0
             ss.current_rep_errors   = []
+            ss.rep_log              = []
+            st.rerun()
+
+
+# SET COMPLETE — inline page (replaces @st.dialog to avoid Streamlit fragment close bug)
+def _set_done_dialog():
+    st.markdown(
+        '<div class="fb fb-ok"><i class="fa-solid fa-circle-check"></i>'
+        f'SET COMPLETE — {ss.rep_target} rep{"s" if ss.rep_target != 1 else ""} done. Great work!</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+    new_target = st.number_input(
+        "Reps for next set",
+        min_value=1, max_value=200, value=ss.rep_target, step=1,
+    )
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        if st.button("Same Set", use_container_width=True):
+            ss.rep_count          = 0
+            ss.current_rep_errors = []
+            ss.rep_log            = []
+            ss.set_just_completed = False
+            st.rerun()
+    with col_b:
+        if st.button("New Count", type="primary", use_container_width=True):
+            ss.rep_target         = new_target
+            ss.rep_count          = 0
+            ss.current_rep_errors = []
+            ss.rep_log            = []
+            ss.set_just_completed = False
+            st.rerun()
+    with col_c:
+        if st.button("Finish", use_container_width=True):
+            ss.set_just_completed = False
+            ss.rep_target         = 0
             st.rerun()
 
 
@@ -464,9 +531,17 @@ with st.sidebar:
         )
 
     st.markdown("<br>", unsafe_allow_html=True)
+    countdown_secs = st.slider(
+        "Countdown (s)", min_value=3, max_value=10,
+        value=ss.countdown_duration, step=1,
+        help="Seconds before calibration begins after clicking Calibrate",
+    )
+    ss.countdown_duration = countdown_secs
+
     col_c, col_r = st.columns(2)
     with col_c:
         if st.button("Calibrate", use_container_width=True):
+            ss.calib_ever_started   = True
             ss.calib_mode           = True
             ss.calib_reps_collected = 0
             ss.calib_depths         = []
@@ -476,7 +551,7 @@ with st.sidebar:
             ss.phase                = "STANDING"
             ss.is_counting_down     = True
             ss.countdown_start      = time.time()
-            ss.feedback             = "Get into position — calibration starts in 5s"
+            ss.feedback             = f"Get into position — calibration starts in {ss.countdown_duration}s"
             ss.feedback_type        = "calib"
     with col_r:
         if st.button("Reset", use_container_width=True):
@@ -528,9 +603,21 @@ if ss.calib_just_completed:
     _calib_done_dialog()
     st.stop()
 
-stop_col, _ = st.columns([1, 5])
-with stop_col:
-    webcam_active = st.toggle("Toggle To Turn Webcam On/Off", value=True)
+if ss.set_just_completed:
+    _set_done_dialog()
+    st.stop()
+
+if not ss.calib_ever_started:
+    feedback_ph.markdown(
+        '<div class="fb fb-calib"><i class="fa-solid fa-crosshairs"></i>'
+        'CALIBRATION REQUIRED — Click <strong>Calibrate</strong> in the sidebar to begin</div>',
+        unsafe_allow_html=True,
+    )
+    webcam_active = False
+else:
+    stop_col, _ = st.columns([1, 5])
+    with stop_col:
+        webcam_active = st.toggle("Toggle To Turn Webcam On/Off", value=True)
 
 
 # FEEDBACK RENDERER
@@ -562,6 +649,15 @@ if webcam_active:
         st.stop()
 
     try:
+        _prev_reps          = -1
+        _prev_phase         = ""
+        _prev_knee          = -1.0
+        _prev_depth         = "UNSET"
+        _prev_fps           = -1.0
+        _prev_feedback      = ""
+        _prev_feedback_type = ""
+        _prev_log_len       = -1
+        _prev_counting      = None
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
@@ -587,88 +683,127 @@ if webcam_active:
                 ka  = avg_knee_angle(lms)
                 ta  = torso_angle(lms)
                 sta = signed_torso_angle(lms)
+                hao = hip_ankle_offset(lms)
                 ss.knee_angle_disp = round(ka, 1)
 
                 if ss.is_counting_down:
-                    time_left = 5.0 - (now - ss.countdown_start)
+                    time_left = ss.countdown_duration - (now - ss.countdown_start)
                     if time_left > 0:
                         frame = draw_countdown(frame, time_left, w, h)
                     else:
                         ss.is_counting_down = False
                         ss.feedback      = "Calibration active — perform 3 full reps"
                         ss.feedback_type = "calib"
-                        _unpack_state(run_fsm(_pack_state(), ty, ka, ta, ss.exercise, sta))
+                        _unpack_state(run_fsm(_pack_state(), ty, ka, ta, ss.exercise, sta, hao))
+                    # During countdown: draw skeleton/HUD but suppress all analysis UI
+                    frame = draw_pose(frame, result, False)
+                    frame = draw_hud(frame, ss.phase, ss.rep_count, ka, ta, ss.fps, w, h)
                 else:
-                    _unpack_state(run_fsm(_pack_state(), ty, ka, ta, ss.exercise, sta))
+                    _unpack_state(run_fsm(_pack_state(), ty, ka, ta, ss.exercise, sta, hao))
 
-                fsm_feedback_type = ss.feedback_type
+                    # Pause for set-complete dialog when target is reached
+                    if ss.rep_target > 0 and not ss.calib_mode and ss.rep_count >= ss.rep_target:
+                        ss.set_just_completed = True
+                        st.rerun()
 
-                # Form analysis (squat only for now — deadlift/OHP stubs still return [])
-                # Tier 1 Red Zone checks run always; Tier 2 baseline checks only after calibration.
-                has_error = False
-                if ss.exercise == "Squat":
-                    baseline = (
-                        {
-                            "torso_angle":                 ss.calib_torso_angle,
-                            "knee_angle":                  ss.calib_knee_angle,
-                            "signed_torso_angle":          ss.calib_signed_torso_angle,
-                            "signed_torso_standing_angle": ss.calib_standing_signed_torso_angle,
-                        }
-                        if ss.calib_torso_angle is not None else None
-                    )
-                    errors = _squat.analyze(lms, baseline, ss.phase)
-                    if errors:
-                        ss.feedback      = errors[0]["message"]
-                        ss.feedback_type = "warn"
-                        has_error        = True
-                        ss.feedback_hold_until = now + 1.5
-                        ss.held_feedback = ss.feedback
-                        if ss.feedback not in ss.current_rep_errors:
-                            ss.current_rep_errors.append(ss.feedback)
+                    fsm_feedback_type = ss.feedback_type
 
-                # Sticky hold: keep error visible if FSM would replace it with a neutral cue
-                if not has_error and now < ss.feedback_hold_until:
-                    if fsm_feedback_type == "neutral":
-                        ss.feedback      = ss.held_feedback
-                        ss.feedback_type = "warn"
-                        has_error        = True
+                    # Form analysis (squat only for now — deadlift/OHP stubs still return [])
+                    # Tier 1 Red Zone checks run always; Tier 2 baseline checks only after calibration.
+                    has_error = False
+                    if ss.exercise == "Squat":
+                        baseline = (
+                            {
+                                "torso_angle":                 ss.calib_torso_angle,
+                                "knee_angle":                  ss.calib_knee_angle,
+                                "signed_torso_angle":          ss.calib_signed_torso_angle,
+                                "signed_torso_standing_angle": ss.calib_standing_signed_torso_angle,
+                                "hip_ankle_offset":            ss.calib_hip_ankle_offset,
+                            }
+                            if ss.calib_torso_angle is not None else None
+                        )
+                        errors = _squat.analyze(lms, baseline, ss.phase)
+                        if errors:
+                            ss.feedback      = errors[0]["message"]
+                            ss.feedback_type = "warn"
+                            has_error        = True
+                            ss.feedback_hold_until = now + 1.5
+                            ss.held_feedback = ss.feedback
+                            if ss.feedback not in ss.current_rep_errors:
+                                ss.current_rep_errors.append(ss.feedback)
 
-                frame = draw_pose(frame, result, has_error)
-                frame = draw_hud(frame, ss.phase, ss.rep_count, ka, ta, ss.fps, w, h)
+                    # Sticky hold: keep error visible if FSM would replace it with a neutral cue
+                    if not has_error and now < ss.feedback_hold_until:
+                        if fsm_feedback_type == "neutral":
+                            ss.feedback      = ss.held_feedback
+                            ss.feedback_type = "warn"
+                            has_error        = True
 
-                if ss.calib_mode:
-                    frame = draw_calibration_bar(frame, ss.calib_reps_collected, 3, w, h)
+                    frame = draw_pose(frame, result, has_error)
+                    frame = draw_hud(frame, ss.phase, ss.rep_count, ka, ta, ss.fps, w, h)
+
+                    if ss.calib_mode:
+                        frame = draw_calibration_bar(frame, ss.calib_reps_collected, 3, w, h)
             else:
                 frame = draw_no_pose(frame)
 
-            rgb_out = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # Metrics — only push to browser when the displayed value changes
+            if ss.rep_count != _prev_reps:
+                metric_reps.metric("REPS", ss.rep_count)
+                _prev_reps = ss.rep_count
+            if ss.phase != _prev_phase:
+                metric_phase.metric("PHASE", ss.phase.capitalize())
+                _prev_phase = ss.phase
+            if round(ss.knee_angle_disp) != round(_prev_knee):
+                metric_knee.metric("KNEE ANGLE", f"{ss.knee_angle_disp:.1f}°")
+                _prev_knee = ss.knee_angle_disp
+            if ss.calib_depth != _prev_depth:
+                metric_depth.metric("CALIB DEPTH", f"{ss.calib_depth:.4f}" if ss.calib_depth else "—")
+                _prev_depth = ss.calib_depth
+            if round(ss.fps) != round(_prev_fps):
+                metric_fps.metric("FPS", f"{ss.fps:.0f}")
+                _prev_fps = ss.fps
 
-            metric_reps.metric("REPS",        ss.rep_count)
-            metric_phase.metric("PHASE",       ss.phase.capitalize())
-            metric_knee.metric("KNEE ANGLE",   f"{ss.knee_angle_disp:.1f}°")
-            metric_depth.metric("CALIB DEPTH", f"{ss.calib_depth:.4f}" if ss.calib_depth else "—")
-            metric_fps.metric("FPS",           f"{ss.fps:.0f}")
-
-            if ss.rep_log:
-                _lines = []
-                for _entry in ss.rep_log[-8:]:
-                    _good  = "Good form" in _entry
-                    _icon  = "fa-circle-check" if _good else "fa-triangle-exclamation"
-                    _color = "var(--ok)" if _good else "var(--danger)"
-                    _lines.append(
-                        f'<div class="status-row" style="margin-bottom:6px;color:{_color}">'
-                        f'<i class="fa-solid {_icon}" style="font-size:0.55rem"></i>{_entry}</div>'
+            # Rep log — only when log grows or countdown state toggles
+            _log_key = (len(ss.rep_log), ss.is_counting_down)
+            if _log_key != (_prev_log_len, _prev_counting):
+                if ss.is_counting_down:
+                    rep_log_ph.empty()
+                elif ss.rep_log:
+                    _lines = []
+                    for _entry in ss.rep_log[-8:]:
+                        _good  = "Good form" in _entry
+                        _icon  = "fa-circle-check" if _good else "fa-triangle-exclamation"
+                        _color = "var(--ok)" if _good else "var(--danger)"
+                        _lines.append(
+                            f'<div class="status-row" style="margin-bottom:6px;color:{_color}">'
+                            f'<i class="fa-solid {_icon}" style="font-size:0.55rem"></i>{_entry}</div>'
+                        )
+                    rep_log_ph.markdown(
+                        '<div class="section-label" style="margin-top:14px">'
+                        '<i class="fa-solid fa-list-check"></i> Rep Log</div>' + "".join(_lines),
+                        unsafe_allow_html=True,
                     )
-                rep_log_ph.markdown(
-                    '<div class="section-label" style="margin-top:14px">'
-                    '<i class="fa-solid fa-list-check"></i> Rep Log</div>' + "".join(_lines),
-                    unsafe_allow_html=True,
-                )
+                _prev_log_len  = len(ss.rep_log)
+                _prev_counting = ss.is_counting_down
 
-            render_feedback()
-            video_ph.image(rgb_out, channels="RGB", use_container_width=True)
+            # Feedback box — only when message or type changes
+            if ss.feedback != _prev_feedback or ss.feedback_type != _prev_feedback_type:
+                if not ss.is_counting_down:
+                    render_feedback()
+                else:
+                    feedback_ph.empty()
+                _prev_feedback      = ss.feedback
+                _prev_feedback_type = ss.feedback_type
 
-            time.sleep(0.01)
+            # Video — JPEG base64 is 5-10x smaller than Streamlit's default PNG encode
+            _, jpg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            b64   = base64.b64encode(jpg).decode()
+            video_ph.markdown(
+                f'<img src="data:image/jpeg;base64,{b64}"'
+                ' style="width:100%;border-radius:2px;border:1px solid var(--border)">',
+                unsafe_allow_html=True,
+            )
 
     except Exception as exc:
         st.error(f"Runtime error: {exc}")

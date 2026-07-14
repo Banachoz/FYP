@@ -51,6 +51,15 @@ def torso_angle(landmarks):
     return angle_between(shoulder, hip, vertical_ref)
 
 
+def hip_ankle_offset(landmarks):
+    """Horizontal offset of hip midpoint relative to ankle midpoint (hip_x - ankle_x).
+    Positive when hips are to the right of ankles, negative when to the left.
+    Used to detect hips pushing forward at lockout (hyperextension indicator)."""
+    hx = (landmarks[LEFT_HIP].x   + landmarks[RIGHT_HIP].x)   / 2
+    ax = (landmarks[LEFT_ANKLE].x + landmarks[RIGHT_ANKLE].x) / 2
+    return hx - ax
+
+
 def signed_torso_angle(landmarks):
     """Signed torso angle via atan2. 0° = upright. Sign convention:
     positive when shoulder is to the right of hip, negative when to the left.
