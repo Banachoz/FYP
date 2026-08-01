@@ -25,11 +25,11 @@ def analyze(landmarks, baseline, phase):
     Tier 2  — Personal baseline deviation (post-calibration)
     """
     if phase == "STANDING":
-        # Absolute check — fires during calibration AND workout (no baseline required).
-        # abs() makes it direction-agnostic (left-facing or right-facing camera angle).
         hip_x   = (landmarks[LEFT_HIP].x   + landmarks[RIGHT_HIP].x)   / 2
         ankle_x = (landmarks[LEFT_ANKLE].x + landmarks[RIGHT_ANKLE].x) / 2
-        if abs(hip_x - ankle_x) > HIP_ABSOLUTE_THRESHOLD:
+        # Absolute check — calibration only (no baseline). Once a baseline exists
+        # the more accurate baseline-corrected hip_forward check below takes over.
+        if not baseline and abs(hip_x - ankle_x) > HIP_ABSOLUTE_THRESHOLD:
             return [{
                 "type":     "hip_forward_absolute",
                 "priority": 1,
@@ -85,7 +85,7 @@ def analyze(landmarks, baseline, phase):
 
     # ── Absolute fallback checks (no personal baseline yet) ───────────────────
     if not baseline:
-        if ta > 45:
+        if phase == "DESCENDING" and ta > 45:
             errors.append({
                 "type":     "calib_lean",
                 "priority": 1,
@@ -93,20 +93,12 @@ def analyze(landmarks, baseline, phase):
                 "message":  "Back rounding on the way down — chest up, brace your core",
             })
         # Hip hinge without knee bend: valid in both phases
-        if ka > 130 and ta > 20:
+        if phase == "DESCENDING" and ka > 150 and ta > 35:
             errors.append({
                 "type":     "calib_hip",
                 "priority": 2,
                 "severity": "warning",
                 "message":  "Hinging at hips without bending knees — sit back and down",
-            })
-        # Only flag insufficient depth when the user is already coming back up
-        if phase == "ASCENDING" and ka > 150:
-            errors.append({
-                "type":     "calib_depth",
-                "priority": 2,
-                "severity": "warning",
-                "message":  "Bend your knees more — sit back and down",
             })
         # Hips-first during calibration: torso still inclined on the way up
         if phase == "ASCENDING" and ta > 40:

@@ -6,11 +6,26 @@ import streamlit as st
 
 from core.angle_calculator import avg_knee_angle, tracked_y_for_exercise, torso_angle, signed_torso_angle, hip_ankle_offset
 from core.phase_detector import run_fsm
+from core.tts_coach import TTSCoach
 import exercises.squat as _squat
 from ui.overlay import (
     apply_vignette, draw_pose, draw_hud,
     draw_countdown, draw_calibration_bar, draw_no_pose,
 )
+
+_TTS_ERROR_MAP = {
+    "red_zone_spine":       "Stop. Forward lean",
+    "forward_rounding":     "Back rounding",
+    "calib_lean":           "Back rounding",
+    "hips_first":           "Hips rising first",
+    "calib_hips_first":     "Hips rising first",
+    "knee_travel":          "Knees forward",
+    "hip_forward":          "Hips pushing forward",
+    "hip_forward_absolute": "Hips pushing forward",
+    "calib_hip":            "Sit back and down",
+    "hyperextension":       "Avoid hyperextension",
+    "calib_depth":          "Go deeper",
+}
 
 
 # PAGE CONFIG
@@ -292,6 +307,8 @@ def _init_state():
         knee_angle_disp=0.0,
         prev_tracked_y=0.0,
         standing_tracked_y=0.0,
+        standing_knee_max=0.0,
+        asc_min_y=99.0,
         feedback_hold_until=0.0,
         held_feedback="",
         current_rep_errors=[],
@@ -300,6 +317,8 @@ def _init_state():
         countdown_duration=5,
         rep_target=0,
         set_just_completed=False,
+        voice_enabled=True,
+        analysis_countdown=False,
     )
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -307,6 +326,12 @@ def _init_state():
 
 _init_state()
 ss = st.session_state
+
+@st.cache_resource
+def _get_tts_coach() -> TTSCoach:
+    return TTSCoach()
+
+_tts = _get_tts_coach()
 
 
 # FSM HELPERS — pack/unpack session state to/from the pure FSM dict
@@ -340,6 +365,8 @@ def _pack_state():
         "depth_ratio":         ss.depth_ratio,
         "prev_tracked_y":      ss.prev_tracked_y,
         "standing_tracked_y":  ss.standing_tracked_y,
+        "standing_knee_max":   ss.standing_knee_max,
+        "asc_min_y":           ss.asc_min_y,
     }
 
 def _unpack_state(result):
@@ -370,6 +397,8 @@ def _unpack_state(result):
     ss.feedback_type        = result["feedback_type"]
     ss.prev_tracked_y       = result["prev_tracked_y"]
     ss.standing_tracked_y   = result["standing_tracked_y"]
+    ss.standing_knee_max    = result["standing_knee_max"]
+    ss.asc_min_y            = result["asc_min_y"]
     # Append rep log entry here — fires before st.rerun() so Calib 3 is never missed
     label = result["completed_rep_label"]
     if label:
@@ -378,6 +407,8 @@ def _unpack_state(result):
         ss.current_rep_errors = []
     if result["needs_rerun"]:
         ss.calib_just_completed = True
+        if ss.voice_enabled:
+            _tts.speak("Calibration complete")
         st.rerun()
 
 
@@ -445,6 +476,11 @@ def _calib_done_dialog():
             ss.rep_count            = 0
             ss.current_rep_errors   = []
             ss.rep_log              = []
+            ss.is_counting_down     = True
+            ss.countdown_start      = time.time()
+            ss.analysis_countdown   = True
+            ss.feedback             = f"Get ready — analysis starts in {ss.countdown_duration}s"
+            ss.feedback_type        = "calib"
             st.rerun()
 
 
@@ -467,6 +503,11 @@ def _set_done_dialog():
             ss.current_rep_errors = []
             ss.rep_log            = []
             ss.set_just_completed = False
+            ss.is_counting_down   = True
+            ss.countdown_start    = time.time()
+            ss.analysis_countdown = True
+            ss.feedback           = f"Get ready — next set starts in {ss.countdown_duration}s"
+            ss.feedback_type      = "calib"
             st.rerun()
     with col_b:
         if st.button("New Count", type="primary", use_container_width=True):
@@ -475,6 +516,11 @@ def _set_done_dialog():
             ss.current_rep_errors = []
             ss.rep_log            = []
             ss.set_just_completed = False
+            ss.is_counting_down   = True
+            ss.countdown_start    = time.time()
+            ss.analysis_countdown = True
+            ss.feedback           = f"Get ready — next set starts in {ss.countdown_duration}s"
+            ss.feedback_type      = "calib"
             st.rerun()
     with col_c:
         if st.button("Finish", use_container_width=True):
@@ -569,6 +615,10 @@ with st.sidebar:
     )
     ss.depth_ratio = depth_pct / 100.0
 
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="section-label"><i class="fa-solid fa-volume-high"></i> Voice</div>', unsafe_allow_html=True)
+    ss.voice_enabled = st.toggle("Voice coaching", value=ss.voice_enabled, label_visibility="collapsed")
+
     rep_log_ph = st.empty()
 
 
@@ -658,6 +708,9 @@ if webcam_active:
         _prev_feedback_type = ""
         _prev_log_len       = -1
         _prev_counting      = None
+        _prev_tts_phase       = ""
+        _spoken_this_phase    = False
+        _spoken_depth_warning = False
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
@@ -692,8 +745,17 @@ if webcam_active:
                         frame = draw_countdown(frame, time_left, w, h)
                     else:
                         ss.is_counting_down = False
-                        ss.feedback      = "Calibration active — perform 3 full reps"
-                        ss.feedback_type = "calib"
+                        if ss.analysis_countdown:
+                            ss.analysis_countdown = False
+                            ss.feedback      = "Analysing form — begin your set"
+                            ss.feedback_type = "ok"
+                            if ss.voice_enabled:
+                                _tts.speak("Ready")
+                        else:
+                            ss.feedback      = "Calibration active — perform 3 full reps"
+                            ss.feedback_type = "calib"
+                            if ss.voice_enabled:
+                                _tts.speak("Calibration started")
                         _unpack_state(run_fsm(_pack_state(), ty, ka, ta, ss.exercise, sta, hao))
                     # During countdown: draw skeleton/HUD but suppress all analysis UI
                     frame = draw_pose(frame, result, False)
@@ -704,13 +766,16 @@ if webcam_active:
                     # Pause for set-complete dialog when target is reached
                     if ss.rep_target > 0 and not ss.calib_mode and ss.rep_count >= ss.rep_target:
                         ss.set_just_completed = True
+                        if ss.voice_enabled:
+                            _tts.speak("Set complete")
                         st.rerun()
 
                     fsm_feedback_type = ss.feedback_type
 
                     # Form analysis (squat only for now — deadlift/OHP stubs still return [])
                     # Tier 1 Red Zone checks run always; Tier 2 baseline checks only after calibration.
-                    has_error = False
+                    has_error      = False
+                    _top_error_type = None
                     if ss.exercise == "Squat":
                         baseline = (
                             {
@@ -724,6 +789,7 @@ if webcam_active:
                         )
                         errors = _squat.analyze(lms, baseline, ss.phase)
                         if errors:
+                            _top_error_type  = errors[0]["type"]
                             ss.feedback      = errors[0]["message"]
                             ss.feedback_type = "warn"
                             has_error        = True
@@ -738,6 +804,23 @@ if webcam_active:
                             ss.feedback      = ss.held_feedback
                             ss.feedback_type = "warn"
                             has_error        = True
+
+                    # TTS — phase tracking + first error per phase
+                    if ss.phase != _prev_tts_phase:
+                        _prev_tts_phase       = ss.phase
+                        _spoken_this_phase    = False
+                        _spoken_depth_warning = False
+                    if ss.feedback == "Insufficient depth — go lower before ascending":
+                        if not _spoken_depth_warning and ss.voice_enabled:
+                            _tts.speak("Go deeper")
+                            _spoken_depth_warning = True
+                    else:
+                        _spoken_depth_warning = False
+                    if has_error and not _spoken_this_phase and ss.voice_enabled:
+                        cue = _TTS_ERROR_MAP.get(_top_error_type)
+                        if cue:
+                            _tts.speak(cue)
+                            _spoken_this_phase = True
 
                     frame = draw_pose(frame, result, has_error)
                     frame = draw_hud(frame, ss.phase, ss.rep_count, ka, ta, ss.fps, w, h)

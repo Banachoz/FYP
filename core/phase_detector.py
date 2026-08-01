@@ -2,7 +2,7 @@ import numpy as np
 
 DESCENT_THRESHOLD = 0.03
 ASCENT_THRESHOLD  = 0.03
-STANDING_KNEE_MIN = 150  # degrees — squat/deadlift "standing" check
+STANDING_KNEE_MIN = 155  # degrees — squat/deadlift "standing" check
 
 
 def run_fsm(state: dict, tracked_y: float, knee_angle: float,
@@ -34,11 +34,17 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
         s["feedback"]      = _msg_standing(exercise)
         s["feedback_type"] = "neutral"
 
-        trigger = (delta < -DESCENT_THRESHOLD) if is_ohp else (delta > DESCENT_THRESHOLD)
+        if knee_angle > s["standing_knee_max"]:
+            s["standing_knee_max"] = knee_angle
 
-        if trigger:
+        hip_trigger  = (delta < -DESCENT_THRESHOLD) if is_ohp else (delta > DESCENT_THRESHOLD)
+        # Knee trigger: squat/DL only — catches knee-dominant starts where hip barely moves
+        knee_trigger = not is_ohp and (s["standing_knee_max"] - knee_angle) > 10
+
+        if hip_trigger or knee_trigger:
             s["phase"]              = "ASCENDING" if is_ohp else "DESCENDING"
             s["standing_tracked_y"] = prev
+            s["standing_knee_max"]  = 0.0
             if s["calib_mode"]:
                 s["calib_peak"]              = tracked_y
                 s["calib_peak_torso"]        = torso_angle_val
@@ -69,7 +75,8 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
                         s["feedback_type"]  = "warn"
                         s["prev_tracked_y"] = tracked_y
                         return s
-                s["phase"] = "ASCENDING"
+                s["phase"]     = "ASCENDING"
+                s["asc_min_y"] = tracked_y  # user is at bottom; track upward from here
 
     elif s["phase"] == "ASCENDING":
         if is_ohp:
@@ -83,8 +90,15 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
         else:
             s["feedback"]      = _msg_ascending(exercise)
             s["feedback_type"] = "neutral"
+            if tracked_y < s["asc_min_y"]:
+                s["asc_min_y"] = tracked_y
             if knee_angle >= STANDING_KNEE_MIN:
                 s = _complete_rep(s)
+            elif tracked_y > s["asc_min_y"] + 0.04:
+                # Hip has dropped 4 % of frame from peak — genuine re-descent.
+                # Position-based so noise (~1 %) cannot trigger it.
+                s["phase"]     = "DESCENDING"
+                s["asc_min_y"] = 99.0
 
     s["last_signed_torso_val"]   = signed_torso_val
     s["last_hip_ankle_offset"]   = hip_ankle_offset_val
@@ -93,10 +107,12 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
 
 
 def _complete_rep(s: dict) -> dict:
-    s["rep_count"]    += 1
-    s["feedback"]      = f"Rep {s['rep_count']} complete"
-    s["feedback_type"] = "ok"
-    s["phase"]         = "STANDING"
+    s["rep_count"]         += 1
+    s["feedback"]           = f"Rep {s['rep_count']} complete"
+    s["feedback_type"]      = "ok"
+    s["phase"]              = "STANDING"
+    s["asc_min_y"]          = 99.0
+    s["standing_knee_max"]  = 0.0
     # Compute label now — calib_reps_collected not yet incremented (+1), calib_mode not yet flipped
     if s["calib_mode"]:
         s["completed_rep_label"] = f"Calib {s['calib_reps_collected'] + 1}"
