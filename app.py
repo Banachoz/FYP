@@ -309,6 +309,7 @@ def _init_state():
         standing_tracked_y=0.0,
         standing_knee_max=0.0,
         asc_min_y=99.0,
+        descent_max_y=0.0,
         feedback_hold_until=0.0,
         held_feedback="",
         current_rep_errors=[],
@@ -367,6 +368,7 @@ def _pack_state():
         "standing_tracked_y":  ss.standing_tracked_y,
         "standing_knee_max":   ss.standing_knee_max,
         "asc_min_y":           ss.asc_min_y,
+        "descent_max_y":       ss.descent_max_y,
     }
 
 def _unpack_state(result):
@@ -399,6 +401,7 @@ def _unpack_state(result):
     ss.standing_tracked_y   = result["standing_tracked_y"]
     ss.standing_knee_max    = result["standing_knee_max"]
     ss.asc_min_y            = result["asc_min_y"]
+    ss.descent_max_y        = result["descent_max_y"]
     # Append rep log entry here — fires before st.rerun() so Calib 3 is never missed
     label = result["completed_rep_label"]
     if label:
@@ -787,7 +790,8 @@ if webcam_active:
                             }
                             if ss.calib_torso_angle is not None else None
                         )
-                        errors = _squat.analyze(lms, baseline, ss.phase)
+                        skip_standing = (ss.phase == "STANDING" and ss.rep_count == 0)
+                        errors = [] if skip_standing else _squat.analyze(lms, baseline, ss.phase)
                         if errors:
                             _top_error_type  = errors[0]["type"]
                             ss.feedback      = errors[0]["message"]

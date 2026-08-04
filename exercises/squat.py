@@ -10,7 +10,7 @@ RED_ZONES = {
 }
 
 DEVIATION_THRESHOLD          = 10    # degrees from personal baseline (descent checks)
-STANDING_HYPEREXT_THRESHOLD  =  5    # degrees — tighter, standing comparison is position-matched
+STANDING_HYPEREXT_THRESHOLD  = 12    # degrees — 5 fired on normal postural variation between sets
 HIP_FORWARD_THRESHOLD        =  0.05 # normalised units — hips pushed forward of ankles (relative)
 HIP_ABSOLUTE_THRESHOLD       =  0.07 # normalised units — absolute hip-ankle offset (no baseline needed)
 

@@ -65,18 +65,21 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
                 s["calib_peak_torso"]        = torso_angle_val
                 s["calib_peak_knee"]         = knee_angle
                 s["calib_peak_signed_torso"] = signed_torso_val
+            if not s["calib_mode"] and tracked_y > s["descent_max_y"]:
+                s["descent_max_y"] = tracked_y
             if delta < -ASCENT_THRESHOLD:
                 if s["calib_depth"] is not None:
                     required = s["standing_tracked_y"] + (
                         (s["calib_depth"] - s["standing_tracked_y"]) * s["depth_ratio"]
                     )
-                    if tracked_y < required:
+                    if s["descent_max_y"] < required:
                         s["feedback"]       = "Insufficient depth — go lower before ascending"
                         s["feedback_type"]  = "warn"
                         s["prev_tracked_y"] = tracked_y
                         return s
-                s["phase"]     = "ASCENDING"
-                s["asc_min_y"] = tracked_y  # user is at bottom; track upward from here
+                s["phase"]        = "ASCENDING"
+                s["asc_min_y"]    = tracked_y
+                s["descent_max_y"] = 0.0
 
     elif s["phase"] == "ASCENDING":
         if is_ohp:
