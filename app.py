@@ -300,7 +300,6 @@ def _init_state():
         calib_just_completed=False,
         feedback="Position yourself laterally to the camera and begin",
         feedback_type="neutral",
-        depth_ratio=0.90,
         exercise="Squat",
         fps=0.0,
         t_last=time.time(),
@@ -363,7 +362,6 @@ def _pack_state():
         "completed_rep_label":                ss.completed_rep_label,
         "feedback":            ss.feedback,
         "feedback_type":       ss.feedback_type,
-        "depth_ratio":         ss.depth_ratio,
         "prev_tracked_y":      ss.prev_tracked_y,
         "standing_tracked_y":  ss.standing_tracked_y,
         "standing_knee_max":   ss.standing_knee_max,
@@ -608,15 +606,6 @@ with st.sidebar:
                 del ss[key]
             _init_state()
             st.rerun()
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown('<div class="section-label"><i class="fa-solid fa-sliders"></i> Thresholds</div>', unsafe_allow_html=True)
-    depth_pct = st.slider(
-        "Required Depth (%)",
-        min_value=70, max_value=100, value=90, step=5,
-        help="% of calibrated depth required before ascending is accepted",
-    )
-    ss.depth_ratio = depth_pct / 100.0
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="section-label"><i class="fa-solid fa-volume-high"></i> Voice</div>', unsafe_allow_html=True)

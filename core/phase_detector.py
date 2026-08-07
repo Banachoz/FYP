@@ -3,6 +3,7 @@ import numpy as np
 DESCENT_THRESHOLD = 0.03
 ASCENT_THRESHOLD  = 0.03
 STANDING_KNEE_MIN = 155  # degrees — squat/deadlift "standing" check
+DEPTH_RATIO       = 0.90 # fraction of calibrated depth required before ascending is accepted
 
 
 def run_fsm(state: dict, tracked_y: float, knee_angle: float,
@@ -70,7 +71,7 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
             if delta < -ASCENT_THRESHOLD:
                 if s["calib_depth"] is not None:
                     required = s["standing_tracked_y"] + (
-                        (s["calib_depth"] - s["standing_tracked_y"]) * s["depth_ratio"]
+                        (s["calib_depth"] - s["standing_tracked_y"]) * DEPTH_RATIO
                     )
                     if s["descent_max_y"] < required:
                         s["feedback"]       = "Insufficient depth — go lower before ascending"
