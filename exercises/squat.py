@@ -1,7 +1,9 @@
 from core.angle_calculator import (
-    torso_angle, signed_torso_angle, avg_knee_angle,
+    torso_angle, signed_torso_angle, avg_knee_angle, hip_ankle_offset,
     LEFT_HIP, RIGHT_HIP, LEFT_KNEE, RIGHT_KNEE, LEFT_ANKLE, RIGHT_ANKLE,
 )
+
+_dbg = 0  # frame counter for debug throttle
 
 # Torso angle measured from VERTICAL (0° = upright, 90° = parallel to floor).
 # Knee angle is the interior angle at the knee (180° = fully extended, ~70° = deep squat).
@@ -10,12 +12,12 @@ RED_ZONES = {
 }
 
 DEVIATION_THRESHOLD          = 10    # degrees from personal baseline (descent checks)
-STANDING_HYPEREXT_THRESHOLD  = 12    # degrees — 5 fired on normal postural variation between sets
-HIP_FORWARD_THRESHOLD        =  0.05 # normalised units — hips pushed forward of ankles (relative)
-HIP_ABSOLUTE_THRESHOLD       =  0.07 # normalised units — absolute hip-ankle offset (no baseline needed)
+STANDING_HYPEREXT_THRESHOLD  =  8    # degrees — torso lean backward from calibrated standing
+HIP_FORWARD_THRESHOLD        =  0.08 # torso-normalised+aspect-corrected — ~5 cm push at 2 m (relative)
+HIP_ABSOLUTE_THRESHOLD       =  0.12 # torso-normalised+aspect-corrected — ~5 cm total lean (absolute)
 
 
-def analyze(landmarks, baseline, phase):
+def analyze(landmarks, baseline, phase, rep_count=0):  # noqa: C901
     """
     Returns a priority-sorted list of form error dicts.
     Caller displays errors[0] in the feedback box; all errors are logged per rep.
@@ -25,17 +27,22 @@ def analyze(landmarks, baseline, phase):
     Tier 2  — Personal baseline deviation (post-calibration)
     """
     if phase == "STANDING":
-        hip_x   = (landmarks[LEFT_HIP].x   + landmarks[RIGHT_HIP].x)   / 2
-        ankle_x = (landmarks[LEFT_ANKLE].x + landmarks[RIGHT_ANKLE].x) / 2
+        global _dbg
+        _dbg = (_dbg + 1) % 30
+
+        live_offset = hip_ankle_offset(landmarks)  # torso-normalised + aspect-corrected
         # Absolute check — calibration only (no baseline). Once a baseline exists
         # the more accurate baseline-corrected hip_forward check below takes over.
-        if not baseline and abs(hip_x - ankle_x) > HIP_ABSOLUTE_THRESHOLD:
-            return [{
-                "type":     "hip_forward_absolute",
-                "priority": 1,
-                "severity": "warning",
-                "message":  "Hips pushing forward — tuck your pelvis and stand tall",
-            }]
+        if not baseline:
+            if _dbg == 0:
+                print(f"[hip_abs] live={live_offset:.3f}  threshold={HIP_ABSOLUTE_THRESHOLD}")
+            if abs(live_offset) > HIP_ABSOLUTE_THRESHOLD:
+                return [{
+                    "type":     "hip_forward_absolute",
+                    "priority": 1,
+                    "severity": "warning",
+                    "message":  "Hips pushing forward — tuck your pelvis and stand tall",
+                }]
 
         if baseline:
             # Use bottom signed torso for direction (clearly signed, never near zero)
@@ -45,10 +52,10 @@ def analyze(landmarks, baseline, phase):
             # Check 1 — hip-forward displacement (strongest hyperextension signal)
             calib_offset = baseline.get("hip_ankle_offset")
             if calib_offset is not None:
-                hip_x   = (landmarks[LEFT_HIP].x   + landmarks[RIGHT_HIP].x)   / 2
-                ankle_x = (landmarks[LEFT_ANKLE].x + landmarks[RIGHT_ANKLE].x) / 2
-                live_offset = hip_x - ankle_x
-                if direction * (live_offset - calib_offset) > HIP_FORWARD_THRESHOLD:
+                dev_hip = direction * (live_offset - calib_offset)
+                if _dbg == 0:
+                    print(f"[hip_fwd] live={live_offset:.3f}  calib={calib_offset:.3f}  dev={dev_hip:.3f}  threshold={HIP_FORWARD_THRESHOLD}  dir={direction:.0f}")
+                if dev_hip > HIP_FORWARD_THRESHOLD:
                     return [{
                         "type":     "hip_forward",
                         "priority": 1,
@@ -56,18 +63,22 @@ def analyze(landmarks, baseline, phase):
                         "message":  "Hips pushing forward at lockout — avoid overextending your lower back",
                     }]
 
-            # Check 2 — shoulder lean backward (signed torso standing comparison)
-            bsst = baseline.get("signed_torso_standing_angle")
-            if bsst is not None:
-                st  = signed_torso_angle(landmarks)
-                dev = direction * (st - bsst)
-                if dev < -STANDING_HYPEREXT_THRESHOLD:
-                    return [{
-                        "type":     "hyperextension",
-                        "priority": 1,
-                        "severity": "warning",
-                        "message":  "Hyperextension at lockout — brace your core and tuck your pelvis",
-                    }]
+            # Check 2 — shoulder lean backward; only after first rep so the
+            # standing reference has been exercised at least once
+            if rep_count > 0:
+                bsst = baseline.get("signed_torso_standing_angle")
+                if bsst is not None:
+                    st      = signed_torso_angle(landmarks)
+                    dev_ht  = direction * (st - bsst)
+                    if _dbg == 0:
+                        print(f"[hyperext] st={st:.1f}  bsst={bsst:.1f}  dev={dev_ht:.1f}  threshold={-STANDING_HYPEREXT_THRESHOLD}  dir={direction:.0f}")
+                    if dev_ht < -STANDING_HYPEREXT_THRESHOLD:
+                        return [{
+                            "type":     "hyperextension",
+                            "priority": 1,
+                            "severity": "warning",
+                            "message":  "Hyperextension at lockout — brace your core and tuck your pelvis",
+                        }]
         return []
 
     errors = []

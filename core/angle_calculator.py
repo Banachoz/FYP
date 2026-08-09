@@ -52,12 +52,18 @@ def torso_angle(landmarks):
 
 
 def hip_ankle_offset(landmarks):
-    """Horizontal offset of hip midpoint relative to ankle midpoint (hip_x - ankle_x).
-    Positive when hips are to the right of ankles, negative when to the left.
-    Used to detect hips pushing forward at lockout (hyperextension indicator)."""
-    hx = (landmarks[LEFT_HIP].x   + landmarks[RIGHT_HIP].x)   / 2
-    ax = (landmarks[LEFT_ANKLE].x + landmarks[RIGHT_ANKLE].x) / 2
-    return hx - ax
+    """Horizontal hip-ankle offset normalised by torso length, with 4:3 aspect correction.
+    In a 640x480 frame, 1 normalised-x unit = 4/3 physical pixels per normalised-y unit,
+    so x-components are scaled before dividing to keep the ratio camera-distance invariant.
+    Positive = hips right of ankles, negative = left."""
+    sx = (landmarks[LEFT_SHOULDER].x + landmarks[RIGHT_SHOULDER].x) / 2
+    sy = (landmarks[LEFT_SHOULDER].y + landmarks[RIGHT_SHOULDER].y) / 2
+    hx = (landmarks[LEFT_HIP].x     + landmarks[RIGHT_HIP].x)      / 2
+    hy = (landmarks[LEFT_HIP].y     + landmarks[RIGHT_HIP].y)      / 2
+    ax = (landmarks[LEFT_ANKLE].x   + landmarks[RIGHT_ANKLE].x)    / 2
+    xscale = 4 / 3  # 640/480 — convert x-normalised to same physical unit as y-normalised
+    torso_len = math.sqrt(((sx - hx) * xscale) ** 2 + (sy - hy) ** 2) + 1e-6
+    return (hx - ax) * xscale / torso_len
 
 
 def signed_torso_angle(landmarks):

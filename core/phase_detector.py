@@ -2,7 +2,7 @@ import numpy as np
 
 DESCENT_THRESHOLD = 0.03
 ASCENT_THRESHOLD  = 0.03
-STANDING_KNEE_MIN = 155  # degrees — squat/deadlift "standing" check
+STANDING_KNEE_MIN = 170  # degrees — squat/deadlift "standing" check
 DEPTH_RATIO       = 0.90 # fraction of calibrated depth required before ascending is accepted
 
 
@@ -38,11 +38,20 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
         if knee_angle > s["standing_knee_max"]:
             s["standing_knee_max"] = knee_angle
 
+        if s["calib_mode"]:
+            s["standing_torso_buffer"].append(signed_torso_val)
+            s["standing_hao_buffer"].append(hip_ankle_offset_val)
+
         hip_trigger  = (delta < -DESCENT_THRESHOLD) if is_ohp else (delta > DESCENT_THRESHOLD)
         # Knee trigger: squat/DL only — catches knee-dominant starts where hip barely moves
         knee_trigger = not is_ohp and (s["standing_knee_max"] - knee_angle) > 10
 
         if hip_trigger or knee_trigger:
+            if s["calib_mode"] and s["standing_torso_buffer"]:
+                s["pre_rep_standing_torso"] = float(np.mean(s["standing_torso_buffer"]))
+                s["pre_rep_standing_hao"]   = float(np.mean(s["standing_hao_buffer"]))
+            s["standing_torso_buffer"] = []
+            s["standing_hao_buffer"]   = []
             s["phase"]              = "ASCENDING" if is_ohp else "DESCENDING"
             s["standing_tracked_y"] = prev
             s["standing_knee_max"]  = 0.0
@@ -127,8 +136,8 @@ def _complete_rep(s: dict) -> dict:
         s["calib_torso_angles"].append(s["calib_peak_torso"])
         s["calib_knee_angles"].append(s["calib_peak_knee"])
         s["calib_signed_torso_angles"].append(s["calib_peak_signed_torso"])
-        s["calib_standing_signed_torso_angles"].append(s["last_signed_torso_val"])
-        s["calib_hip_ankle_offsets"].append(s["last_hip_ankle_offset"])
+        s["calib_standing_signed_torso_angles"].append(s["pre_rep_standing_torso"])
+        s["calib_hip_ankle_offsets"].append(s["pre_rep_standing_hao"])
         s["calib_reps_collected"] += 1
         s["calib_peak"]              = 0.0
         s["calib_peak_torso"]        = 0.0
