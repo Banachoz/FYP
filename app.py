@@ -7,7 +7,8 @@ import streamlit as st
 from core.angle_calculator import avg_knee_angle, tracked_y_for_exercise, torso_angle, signed_torso_angle, hip_ankle_offset
 from core.phase_detector import run_fsm
 from core.tts_coach import TTSCoach
-import exercises.squat as _squat
+import exercises.squat    as _squat
+import exercises.deadlift as _deadlift
 from ui.overlay import (
     apply_vignette, draw_pose, draw_hud,
     draw_countdown, draw_calibration_bar, draw_no_pose,
@@ -25,6 +26,8 @@ _TTS_ERROR_MAP = {
     "calib_hip":            "Sit back and down",
     "hyperextension":       "Avoid hyperextension",
     "calib_depth":          "Go deeper",
+    "hips_too_high":        "Lower your hips",
+    "shoulders_behind":     "Shoulders forward",
 }
 
 
@@ -274,7 +277,7 @@ def _init_state():
     defaults = dict(
         is_counting_down=False,
         countdown_start=0.0,
-        phase="STANDING",
+        phase="ASCENDING" if st.session_state.get("exercise", "Squat") == "Deadlift" else "STANDING",
         rep_count=0,
         calib_mode=False,
         calib_reps_collected=0,
@@ -330,6 +333,11 @@ def _init_state():
 
 _init_state()
 ss = st.session_state
+
+
+def _initial_phase():
+    return "ASCENDING" if ss.exercise == "Deadlift" else "STANDING"
+
 
 @st.cache_resource
 def _get_tts_coach() -> TTSCoach:
@@ -477,6 +485,7 @@ def _calib_done_dialog():
             ss.current_rep_errors   = []
             ss.rep_log              = []
             ss.rep_target           = 0
+            ss.phase                = _initial_phase()
             ss.is_counting_down     = True
             ss.countdown_start      = time.time()
             ss.feedback             = f"Get into position — calibration starts in {ss.countdown_duration}s"
@@ -489,6 +498,7 @@ def _calib_done_dialog():
             ss.rep_count            = 0
             ss.current_rep_errors   = []
             ss.rep_log              = []
+            ss.phase                = _initial_phase()
             ss.is_counting_down     = True
             ss.countdown_start      = time.time()
             ss.analysis_countdown   = True
@@ -516,6 +526,7 @@ def _set_done_dialog():
             ss.current_rep_errors = []
             ss.rep_log            = []
             ss.set_just_completed = False
+            ss.phase              = _initial_phase()
             ss.is_counting_down   = True
             ss.countdown_start    = time.time()
             ss.analysis_countdown = True
@@ -529,6 +540,7 @@ def _set_done_dialog():
             ss.current_rep_errors = []
             ss.rep_log            = []
             ss.set_just_completed = False
+            ss.phase              = _initial_phase()
             ss.is_counting_down   = True
             ss.countdown_start    = time.time()
             ss.analysis_countdown = True
@@ -607,7 +619,7 @@ with st.sidebar:
             ss.calib_depth          = None
             ss.calib_peak           = 0.0
             ss.rep_count            = 0
-            ss.phase                = "STANDING"
+            ss.phase                = _initial_phase()
             ss.is_counting_down     = True
             ss.countdown_start      = time.time()
             ss.feedback             = f"Get into position — calibration starts in {ss.countdown_duration}s"
@@ -776,11 +788,11 @@ if webcam_active:
 
                     fsm_feedback_type = ss.feedback_type
 
-                    # Form analysis (squat only for now — deadlift/OHP stubs still return [])
+                    # Form analysis — Squat and Deadlift.
                     # Tier 1 Red Zone checks run always; Tier 2 baseline checks only after calibration.
                     has_error      = False
                     _top_error_type = None
-                    if ss.exercise == "Squat":
+                    if ss.exercise in ("Squat", "Deadlift"):
                         baseline = (
                             {
                                 "torso_angle":                 ss.calib_torso_angle,
@@ -791,7 +803,11 @@ if webcam_active:
                             }
                             if ss.calib_torso_angle is not None else None
                         )
-                        errors = _squat.analyze(lms, baseline, ss.phase, ss.rep_count)
+                        errors = (
+                            _squat.analyze(lms, baseline, ss.phase, ss.rep_count)
+                            if ss.exercise == "Squat" else
+                            _deadlift.analyze(lms, baseline, ss.phase, ss.rep_count)
+                        )
                         if errors:
                             _top_error_type  = errors[0]["type"]
                             ss.feedback      = errors[0]["message"]

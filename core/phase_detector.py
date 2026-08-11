@@ -103,6 +103,14 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
         else:
             s["feedback"]      = _msg_ascending(exercise)
             s["feedback_type"] = "neutral"
+            # Capture bottom position for deadlift starting in ASCENDING (calib_peak = 0.0 initially).
+            # Safe for squat: calib_peak is already set at the true bottom during DESCENDING,
+            # so tracked_y (decreasing on the way up) never exceeds it here.
+            if s["calib_mode"] and tracked_y > s["calib_peak"]:
+                s["calib_peak"]              = tracked_y
+                s["calib_peak_torso"]        = torso_angle_val
+                s["calib_peak_knee"]         = knee_angle
+                s["calib_peak_signed_torso"] = signed_torso_val
             if tracked_y < s["asc_min_y"]:
                 s["asc_min_y"] = tracked_y
             if knee_angle >= STANDING_KNEE_MIN:
