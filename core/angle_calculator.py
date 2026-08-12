@@ -79,6 +79,20 @@ def shoulder_ankle_offset(landmarks):
     return (sx - ax) * xscale / torso_len
 
 
+def wrist_shoulder_offset(landmarks):
+    """Horizontal wrist-shoulder offset normalised by torso length, with 4:3 aspect correction.
+    Positive = wrists right of shoulders, negative = left.
+    Used to detect the bar drifting forward of the body in deadlift."""
+    sx = (landmarks[LEFT_SHOULDER].x + landmarks[RIGHT_SHOULDER].x) / 2
+    sy = (landmarks[LEFT_SHOULDER].y + landmarks[RIGHT_SHOULDER].y) / 2
+    hx = (landmarks[LEFT_HIP].x     + landmarks[RIGHT_HIP].x)      / 2
+    hy = (landmarks[LEFT_HIP].y     + landmarks[RIGHT_HIP].y)      / 2
+    wx = (landmarks[LEFT_WRIST].x   + landmarks[RIGHT_WRIST].x)    / 2
+    xscale = 4 / 3
+    torso_len = math.sqrt(((sx - hx) * xscale) ** 2 + (sy - hy) ** 2) + 1e-6
+    return (wx - sx) * xscale / torso_len
+
+
 def signed_torso_angle(landmarks):
     """Signed torso angle via atan2. 0° = upright. Sign convention:
     positive when shoulder is to the right of hip, negative when to the left.

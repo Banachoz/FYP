@@ -1,6 +1,8 @@
 from core.angle_calculator import (
-    torso_angle, signed_torso_angle, hip_ankle_offset, shoulder_ankle_offset,
+    torso_angle, signed_torso_angle, hip_ankle_offset,
+    shoulder_ankle_offset, wrist_shoulder_offset,
     LEFT_HIP, RIGHT_HIP, LEFT_SHOULDER, RIGHT_SHOULDER,
+    LEFT_WRIST, RIGHT_WRIST,
 )
 
 RED_ZONES = {
@@ -12,7 +14,9 @@ STANDING_HYPEREXT_THRESHOLD  =  8
 HIP_FORWARD_THRESHOLD        =  0.08
 HIP_ABSOLUTE_THRESHOLD       =  0.12
 SHOULDER_ANKLE_THRESHOLD     =  0.05  # torso-normalised
-SETUP_TORSO_MIN              = 45     # degrees — gate for hip-shoulder height check at bottom
+WRIST_FORWARD_THRESHOLD      =  0.20  # torso-normalised — wrists must not be forward of shoulders
+WRIST_VIS_MIN                =  0.40  # MediaPipe visibility cutoff — side-view occludes wrists more often
+SETUP_TORSO_MIN              = 25     # degrees — gate for hip-shoulder height check at bottom
 
 
 def analyze(landmarks, baseline, phase, rep_count=0):
@@ -76,32 +80,53 @@ def analyze(landmarks, baseline, phase, rep_count=0):
         return []
 
     # ASCENDING and DESCENDING — movement checks
-    bst       = baseline.get("signed_torso_angle") if baseline else None
-    direction = 1.0 if (bst or 0) >= 0 else -1.0
-
-    # Shoulders behind bar (proxy: ankles) — both phases
-    sao = shoulder_ankle_offset(landmarks)
-    if direction * sao < -SHOULDER_ANKLE_THRESHOLD:
-        errors.append({
-            "type":     "shoulders_behind",
-            "priority": 2,
-            "severity": "warning",
-            "message":  "Shoulders behind the bar — keep shoulders over or in front of the bar",
-        })
+    bst = baseline.get("signed_torso_angle") if baseline else None
+    # Use the calibrated bottom torso angle for direction when available; fall back to the
+    # live torso angle otherwise. At the bottom of a deadlift the torso is heavily inclined,
+    # so the live angle has a clear sign even without a calibrated baseline.
+    direction_ref = bst if bst is not None else signed_torso_angle(landmarks)
+    direction     = 1.0 if direction_ref >= 0 else -1.0
 
     if phase == "ASCENDING":
         hip_y      = (landmarks[LEFT_HIP].y      + landmarks[RIGHT_HIP].y)      / 2
         shoulder_y = (landmarks[LEFT_SHOULDER].y + landmarks[RIGHT_SHOULDER].y) / 2
 
-        # Hips too high at setup: when torso is still heavily inclined, hips must be below shoulders
-        if ta > SETUP_TORSO_MIN and hip_y <= shoulder_y:
-            errors.append({
-                "type":     "hips_too_high",
-                "priority": 1,
-                "severity": "warning",
-                "message":  "Hips too high at setup — lower your hips before initiating the pull",
-            })
+        # Starting-position checks — only while the torso is still heavily inclined
+        if ta > SETUP_TORSO_MIN:
+            # Shoulders must not drift behind the bar (ankles used as bar-position proxy)
+            sao = shoulder_ankle_offset(landmarks)
+            if direction * sao < -SHOULDER_ANKLE_THRESHOLD:
+                errors.append({
+                    "type":     "shoulders_behind",
+                    "priority": 2,
+                    "severity": "warning",
+                    "message":  "Shoulders behind the bar — keep shoulders over or in front of the bar",
+                })
 
+            # Hips must be lower than shoulders before the pull begins
+            if hip_y <= shoulder_y:
+                errors.append({
+                    "type":     "hips_too_high",
+                    "priority": 1,
+                    "severity": "warning",
+                    "message":  "Hips too high at setup — lower your hips before initiating the pull",
+                })
+
+        # Bar drifting away from the body — wrists moving forward of the shoulders.
+        # Gated on MediaPipe wrist visibility: side-view occlusion makes wrist tracking unreliable.
+        lw_vis = landmarks[LEFT_WRIST].visibility
+        rw_vis = landmarks[RIGHT_WRIST].visibility
+        if min(lw_vis, rw_vis) > WRIST_VIS_MIN:
+            wso = wrist_shoulder_offset(landmarks)
+            if direction * wso > WRIST_FORWARD_THRESHOLD:
+                errors.append({
+                    "type":     "bar_too_far",
+                    "priority": 2,
+                    "severity": "warning",
+                    "message":  "Bar too far from body — keep the bar close to your legs throughout the lift",
+                })
+
+        # Hips rising faster than the torso — personal baseline deviation
         if baseline and bst is not None:
             st         = signed_torso_angle(landmarks)
             signed_dev = direction * (st - bst)

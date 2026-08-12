@@ -28,6 +28,7 @@ _TTS_ERROR_MAP = {
     "calib_depth":          "Go deeper",
     "hips_too_high":        "Lower your hips",
     "shoulders_behind":     "Shoulders forward",
+    "bar_too_far":          "Keep the bar close",
 }
 
 
@@ -316,6 +317,8 @@ def _init_state():
         standing_hao_buffer=[],
         pre_rep_standing_torso=0.0,
         pre_rep_standing_hao=0.0,
+        bottom_knee_ref=0.0,
+        dl_at_bottom=False,
         feedback_hold_until=0.0,
         held_feedback="",
         current_rep_errors=[],
@@ -383,6 +386,8 @@ def _pack_state():
         "standing_hao_buffer":    ss.standing_hao_buffer,
         "pre_rep_standing_torso": ss.pre_rep_standing_torso,
         "pre_rep_standing_hao":   ss.pre_rep_standing_hao,
+        "bottom_knee_ref":        ss.bottom_knee_ref,
+        "dl_at_bottom":           ss.dl_at_bottom,
     }
 
 def _unpack_state(result):
@@ -420,6 +425,8 @@ def _unpack_state(result):
     ss.standing_hao_buffer    = result["standing_hao_buffer"]
     ss.pre_rep_standing_torso = result["pre_rep_standing_torso"]
     ss.pre_rep_standing_hao   = result["pre_rep_standing_hao"]
+    ss.bottom_knee_ref        = result["bottom_knee_ref"]
+    ss.dl_at_bottom           = result["dl_at_bottom"]
     # Append rep log entry here — fires before st.rerun() so Calib 3 is never missed
     label = result["completed_rep_label"]
     if label:
@@ -485,6 +492,7 @@ def _calib_done_dialog():
             ss.current_rep_errors   = []
             ss.rep_log              = []
             ss.rep_target           = 0
+            ss.bottom_knee_ref      = 0.0
             ss.phase                = _initial_phase()
             ss.is_counting_down     = True
             ss.countdown_start      = time.time()
@@ -618,6 +626,7 @@ with st.sidebar:
             ss.calib_depths         = []
             ss.calib_depth          = None
             ss.calib_peak           = 0.0
+            ss.bottom_knee_ref      = 0.0
             ss.rep_count            = 0
             ss.phase                = _initial_phase()
             ss.is_counting_down     = True

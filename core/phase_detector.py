@@ -2,7 +2,7 @@ import numpy as np
 
 DESCENT_THRESHOLD = 0.03
 ASCENT_THRESHOLD  = 0.03
-STANDING_KNEE_MIN = 170  # degrees — squat/deadlift "standing" check
+STANDING_KNEE_MIN = 165  # degrees — squat/deadlift "standing" check
 DEPTH_RATIO       = 0.90 # fraction of calibrated depth required before ascending is accepted
 
 
@@ -53,6 +53,7 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
             s["standing_torso_buffer"] = []
             s["standing_hao_buffer"]   = []
             s["phase"]              = "ASCENDING" if is_ohp else "DESCENDING"
+            s["dl_at_bottom"]       = False
             s["standing_tracked_y"] = prev
             s["standing_knee_max"]  = 0.0
             if s["calib_mode"]:
@@ -66,7 +67,7 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
             s["feedback"]      = "Lower the bar with control"
             s["feedback_type"] = "neutral"
             if tracked_y >= s["standing_tracked_y"] - 0.05:
-                s = _complete_rep(s)
+                s = _complete_rep(s, exercise)
         else:
             s["feedback"]      = _msg_descending(exercise)
             s["feedback_type"] = "neutral"
@@ -77,7 +78,16 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
                 s["calib_peak_signed_torso"] = signed_torso_val
             if not s["calib_mode"] and tracked_y > s["descent_max_y"]:
                 s["descent_max_y"] = tracked_y
-            if delta < -ASCENT_THRESHOLD:
+            if exercise == "Deadlift":
+                # Switch to ASCENDING the moment the knee angle reaches the starting
+                # position — the bottom of the lift is defined by knee angle, not hip height.
+                knee_ref = s["calib_knee_angle"] if s["calib_knee_angle"] is not None else s["bottom_knee_ref"]
+                if knee_ref > 0 and knee_angle <= knee_ref + 5:
+                    s["dl_at_bottom"]  = False
+                    s["phase"]         = "ASCENDING"
+                    s["asc_min_y"]     = tracked_y
+                    s["descent_max_y"] = 0.0
+            elif delta < -ASCENT_THRESHOLD:
                 if s["calib_depth"] is not None:
                     required = s["standing_tracked_y"] + (
                         (s["calib_depth"] - s["standing_tracked_y"]) * DEPTH_RATIO
@@ -103,6 +113,13 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
         else:
             s["feedback"]      = _msg_ascending(exercise)
             s["feedback_type"] = "neutral"
+            # Capture the starting knee angle for deadlift on the very first frame of the
+            # first calibration rep — the user is still at the bottom position at this point,
+            # before any upward movement. Used later to detect when they've returned to the
+            # bottom after descending, so the phase can switch back to ASCENDING.
+            if (exercise == "Deadlift" and s["calib_mode"]
+                    and s["calib_reps_collected"] == 0 and s["bottom_knee_ref"] == 0.0):
+                s["bottom_knee_ref"] = knee_angle
             # Capture bottom position for deadlift starting in ASCENDING (calib_peak = 0.0 initially).
             # Safe for squat: calib_peak is already set at the true bottom during DESCENDING,
             # so tracked_y (decreasing on the way up) never exceeds it here.
@@ -114,12 +131,13 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
             if tracked_y < s["asc_min_y"]:
                 s["asc_min_y"] = tracked_y
             if knee_angle >= STANDING_KNEE_MIN:
-                s = _complete_rep(s)
+                s = _complete_rep(s, exercise)
             elif tracked_y > s["asc_min_y"] + 0.04:
                 # Hip has dropped 4 % of frame from peak — genuine re-descent.
                 # Position-based so noise (~1 %) cannot trigger it.
-                s["phase"]     = "DESCENDING"
-                s["asc_min_y"] = 99.0
+                s["phase"]        = "DESCENDING"
+                s["dl_at_bottom"] = False
+                s["asc_min_y"]    = 99.0
 
     s["last_signed_torso_val"]   = signed_torso_val
     s["last_hip_ankle_offset"]   = hip_ankle_offset_val
@@ -127,7 +145,7 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
     return s
 
 
-def _complete_rep(s: dict) -> dict:
+def _complete_rep(s: dict, exercise: str = "") -> dict:
     s["rep_count"]         += 1
     s["feedback"]           = f"Rep {s['rep_count']} complete"
     s["feedback_type"]      = "ok"
@@ -157,7 +175,12 @@ def _complete_rep(s: dict) -> dict:
             s["calib_knee_angle"]                 = float(np.mean(s["calib_knee_angles"]))
             s["calib_signed_torso_angle"]         = float(np.mean(s["calib_signed_torso_angles"]))
             s["calib_standing_signed_torso_angle"] = float(np.mean(s["calib_standing_signed_torso_angles"]))
-            s["calib_hip_ankle_offset"]            = float(np.mean(s["calib_hip_ankle_offsets"]))
+            # Deadlift starts in ASCENDING so pre_rep_standing_hao is 0.0 for rep 1
+            # (no prior STANDING phase). Use only reps 2 and 3 to avoid a biased baseline.
+            hao_vals = s["calib_hip_ankle_offsets"]
+            if exercise == "Deadlift" and len(hao_vals) >= 2:
+                hao_vals = hao_vals[-2:]
+            s["calib_hip_ankle_offset"]            = float(np.mean(hao_vals))
             s["calib_mode"]               = False
             s["feedback"]                 = "Calibration complete — system locked to your ROM"
             s["feedback_type"]            = "ok"
