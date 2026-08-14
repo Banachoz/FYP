@@ -84,6 +84,8 @@ def analyze(landmarks, baseline, phase, rep_count=0):  # noqa: C901
     errors = []
     ta = torso_angle(landmarks)
     ka = avg_knee_angle(landmarks)
+    # debug — investigating torso_angle underreporting vs physical angle
+    print(f"[SQ torso_angle] ta={ta:.1f}  threshold={RED_ZONES['torso_angle_max']}")
 
     # ── Tier 1: Spine Red Zone ────────────────────────────────────────────────
     if ta > RED_ZONES["torso_angle_max"]:

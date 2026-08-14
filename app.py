@@ -319,6 +319,7 @@ def _init_state():
         pre_rep_standing_hao=0.0,
         bottom_knee_ref=0.0,
         dl_at_bottom=False,
+        dl_reached_lockout=False,
         feedback_hold_until=0.0,
         held_feedback="",
         current_rep_errors=[],
@@ -388,6 +389,7 @@ def _pack_state():
         "pre_rep_standing_hao":   ss.pre_rep_standing_hao,
         "bottom_knee_ref":        ss.bottom_knee_ref,
         "dl_at_bottom":           ss.dl_at_bottom,
+        "dl_reached_lockout":     ss.dl_reached_lockout,
     }
 
 def _unpack_state(result):
@@ -427,6 +429,7 @@ def _unpack_state(result):
     ss.pre_rep_standing_hao   = result["pre_rep_standing_hao"]
     ss.bottom_knee_ref        = result["bottom_knee_ref"]
     ss.dl_at_bottom           = result["dl_at_bottom"]
+    ss.dl_reached_lockout     = result["dl_reached_lockout"]
     # Append rep log entry here — fires before st.rerun() so Calib 3 is never missed
     label = result["completed_rep_label"]
     if label:
@@ -493,6 +496,7 @@ def _calib_done_dialog():
             ss.rep_log              = []
             ss.rep_target           = 0
             ss.bottom_knee_ref      = 0.0
+            ss.dl_reached_lockout   = False
             ss.phase                = _initial_phase()
             ss.is_counting_down     = True
             ss.countdown_start      = time.time()
@@ -627,6 +631,7 @@ with st.sidebar:
             ss.calib_depth          = None
             ss.calib_peak           = 0.0
             ss.bottom_knee_ref      = 0.0
+            ss.dl_reached_lockout   = False
             ss.rep_count            = 0
             ss.phase                = _initial_phase()
             ss.is_counting_down     = True

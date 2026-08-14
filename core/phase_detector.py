@@ -79,14 +79,18 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
             if not s["calib_mode"] and tracked_y > s["descent_max_y"]:
                 s["descent_max_y"] = tracked_y
             if exercise == "Deadlift":
-                # Switch to ASCENDING the moment the knee angle reaches the starting
-                # position — the bottom of the lift is defined by knee angle, not hip height.
+                # Rep is complete when the bar returns to the floor (knee angle reaches
+                # the starting reference). Only count if the user actually reached lockout
+                # (dl_reached_lockout) — guards against false reps from small hip bobs.
                 knee_ref = s["calib_knee_angle"] if s["calib_knee_angle"] is not None else s["bottom_knee_ref"]
                 if knee_ref > 0 and knee_angle <= knee_ref + 5:
                     s["dl_at_bottom"]  = False
-                    s["phase"]         = "ASCENDING"
                     s["asc_min_y"]     = tracked_y
                     s["descent_max_y"] = 0.0
+                    if s["dl_reached_lockout"]:
+                        s = _complete_rep(s, exercise)  # counts the rep
+                    s["phase"]              = "ASCENDING"  # override STANDING set by _complete_rep
+                    s["dl_reached_lockout"] = False  # reset for the next rep
             elif delta < -ASCENT_THRESHOLD:
                 if s["calib_depth"] is not None:
                     required = s["standing_tracked_y"] + (
@@ -131,13 +135,22 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
             if tracked_y < s["asc_min_y"]:
                 s["asc_min_y"] = tracked_y
             if knee_angle >= STANDING_KNEE_MIN:
-                s = _complete_rep(s, exercise)
+                if exercise == "Deadlift":
+                    # Lockout reached — enter STANDING but don't count the rep yet.
+                    # The rep is counted when the bar returns to the floor (DESCENDING→ASCENDING).
+                    s["phase"]              = "STANDING"
+                    s["asc_min_y"]          = 99.0
+                    s["standing_knee_max"]  = 0.0
+                    s["dl_reached_lockout"] = True
+                else:
+                    s = _complete_rep(s, exercise)
             elif tracked_y > s["asc_min_y"] + 0.04:
                 # Hip has dropped 4 % of frame from peak — genuine re-descent.
                 # Position-based so noise (~1 %) cannot trigger it.
-                s["phase"]        = "DESCENDING"
-                s["dl_at_bottom"] = False
-                s["asc_min_y"]    = 99.0
+                s["phase"]              = "DESCENDING"
+                s["dl_at_bottom"]       = False
+                s["dl_reached_lockout"] = False  # never reached lockout this attempt
+                s["asc_min_y"]          = 99.0
 
     s["last_signed_torso_val"]   = signed_torso_val
     s["last_hip_ankle_offset"]   = hip_ankle_offset_val

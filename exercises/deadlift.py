@@ -6,15 +6,15 @@ from core.angle_calculator import (
 )
 
 RED_ZONES = {
-    "torso_angle_max": 80,  # higher than squat (65) — conventional DL requires significant forward lean
+    "torso_angle_max": 70,
 }
 
 DEVIATION_THRESHOLD          = 10
 STANDING_HYPEREXT_THRESHOLD  =  8
 HIP_FORWARD_THRESHOLD        =  0.08
-HIP_ABSOLUTE_THRESHOLD       =  0.12
+HIP_ABSOLUTE_THRESHOLD       =  0.15
 SHOULDER_ANKLE_THRESHOLD     =  0.05  # torso-normalised
-WRIST_FORWARD_THRESHOLD      =  0.20  # torso-normalised — wrists must not be forward of shoulders
+WRIST_FORWARD_THRESHOLD      =  0.10  # torso-normalised — wrists must not be forward of shoulders
 WRIST_VIS_MIN                =  0.40  # MediaPipe visibility cutoff — side-view occludes wrists more often
 SETUP_TORSO_MIN              = 25     # degrees — gate for hip-shoulder height check at bottom
 
@@ -22,7 +22,7 @@ SETUP_TORSO_MIN              = 25     # degrees — gate for hip-shoulder height
 def analyze(landmarks, baseline, phase, rep_count=0):
     """
     Conventional deadlift form analysis. FSM starts in ASCENDING (user grips bar at bottom).
-    Rep counted at lockout (knee extension). Ankle used as bar-position proxy.
+    Ankle used as bar-position proxy.
 
     Tier 1  — Spine red zone (universal, early return)
     Fallback — Absolute checks when no baseline exists
@@ -30,6 +30,8 @@ def analyze(landmarks, baseline, phase, rep_count=0):
     """
     errors = []
     ta = torso_angle(landmarks)
+    # debug — investigating torso_angle underreporting vs physical angle
+    print(f"[DL torso_angle] ta={ta:.1f}  threshold={RED_ZONES['torso_angle_max']}")
 
     # Tier 1 — Spine red zone (all phases)
     if ta > RED_ZONES["torso_angle_max"]:
@@ -116,8 +118,11 @@ def analyze(landmarks, baseline, phase, rep_count=0):
         # Gated on MediaPipe wrist visibility: side-view occlusion makes wrist tracking unreliable.
         lw_vis = landmarks[LEFT_WRIST].visibility
         rw_vis = landmarks[RIGHT_WRIST].visibility
+        # debug — investigating wrist visibility gate blocking bar_too_far in side view
+        print(f"[wrist_vis] lw={lw_vis:.2f}  rw={rw_vis:.2f}  min={min(lw_vis,rw_vis):.2f}  threshold={WRIST_VIS_MIN}")
         if min(lw_vis, rw_vis) > WRIST_VIS_MIN:
             wso = wrist_shoulder_offset(landmarks)
+            print(f"[wrist_offset] wso={wso:.3f}  dir*wso={direction*wso:.3f}  threshold={WRIST_FORWARD_THRESHOLD}")
             if direction * wso > WRIST_FORWARD_THRESHOLD:
                 errors.append({
                     "type":     "bar_too_far",
@@ -137,13 +142,6 @@ def analyze(landmarks, baseline, phase, rep_count=0):
                     "severity": "warning",
                     "message":  "Hips rising too fast — drive chest and hips up together",
                 })
-        elif not baseline and ta > 55:
-            errors.append({
-                "type":     "calib_lean",
-                "priority": 1,
-                "severity": "warning",
-                "message":  "Excessive forward lean during pull — maintain a neutral spine",
-            })
 
     if phase == "DESCENDING":
         if baseline and bst is not None:
