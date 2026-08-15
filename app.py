@@ -320,6 +320,7 @@ def _init_state():
         bottom_knee_ref=0.0,
         dl_at_bottom=False,
         dl_reached_lockout=False,
+        sq_descent_min_knee=180.0,
         feedback_hold_until=0.0,
         held_feedback="",
         current_rep_errors=[],
@@ -390,6 +391,7 @@ def _pack_state():
         "bottom_knee_ref":        ss.bottom_knee_ref,
         "dl_at_bottom":           ss.dl_at_bottom,
         "dl_reached_lockout":     ss.dl_reached_lockout,
+        "sq_descent_min_knee":    ss.sq_descent_min_knee,
     }
 
 def _unpack_state(result):
@@ -430,6 +432,7 @@ def _unpack_state(result):
     ss.bottom_knee_ref        = result["bottom_knee_ref"]
     ss.dl_at_bottom           = result["dl_at_bottom"]
     ss.dl_reached_lockout     = result["dl_reached_lockout"]
+    ss.sq_descent_min_knee    = result["sq_descent_min_knee"]
     # Append rep log entry here — fires before st.rerun() so Calib 3 is never missed
     label = result["completed_rep_label"]
     if label:
@@ -497,6 +500,7 @@ def _calib_done_dialog():
             ss.rep_target           = 0
             ss.bottom_knee_ref      = 0.0
             ss.dl_reached_lockout   = False
+            ss.sq_descent_min_knee  = 180.0
             ss.phase                = _initial_phase()
             ss.is_counting_down     = True
             ss.countdown_start      = time.time()
@@ -527,6 +531,14 @@ def _set_done_dialog():
         unsafe_allow_html=True,
     )
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+    analysis_entries = [e for e in ss.rep_log if e.startswith("Rep")]
+    if analysis_entries:
+        st.markdown("**Set rep summary:**")
+        for entry in analysis_entries:
+            is_good = "Good form" in entry
+            icon, color = ("✓", "green") if is_good else ("✗", "red")
+            st.markdown(f":{color}[{icon} {entry}]")
+    st.markdown("---")
     new_target = st.number_input(
         "Reps for next set",
         min_value=1, max_value=200, value=ss.rep_target, step=1,
@@ -632,6 +644,7 @@ with st.sidebar:
             ss.calib_peak           = 0.0
             ss.bottom_knee_ref      = 0.0
             ss.dl_reached_lockout   = False
+            ss.sq_descent_min_knee  = 180.0
             ss.rep_count            = 0
             ss.phase                = _initial_phase()
             ss.is_counting_down     = True
@@ -820,7 +833,8 @@ if webcam_active:
                         errors = (
                             _squat.analyze(lms, baseline, ss.phase, ss.rep_count)
                             if ss.exercise == "Squat" else
-                            _deadlift.analyze(lms, baseline, ss.phase, ss.rep_count)
+                            _deadlift.analyze(lms, baseline, ss.phase, ss.rep_count,
+                                              bottom_ref_torso=ss.calib_peak_signed_torso if ss.calib_mode else None)
                         )
                         if errors:
                             _top_error_type  = errors[0]["type"]

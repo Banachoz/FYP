@@ -1,9 +1,10 @@
 import numpy as np
 
-DESCENT_THRESHOLD = 0.03
-ASCENT_THRESHOLD  = 0.03
-STANDING_KNEE_MIN = 165  # degrees — squat/deadlift "standing" check
-DEPTH_RATIO       = 0.90 # fraction of calibrated depth required before ascending is accepted
+DESCENT_THRESHOLD    = 0.03
+ASCENT_THRESHOLD     = 0.03
+STANDING_KNEE_MIN    = 165  # degrees — squat/deadlift "standing" check
+DEPTH_RATIO          = 0.90 # fraction of calibrated depth required before ascending is accepted
+SQUAT_DEPTH_KNEE_MIN = 130  # degrees — knee must reach this angle for a squat rep to count
 
 
 def run_fsm(state: dict, tracked_y: float, knee_angle: float,
@@ -56,6 +57,8 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
             s["dl_at_bottom"]       = False
             s["standing_tracked_y"] = prev
             s["standing_knee_max"]  = 0.0
+            if not is_ohp:
+                s["sq_descent_min_knee"] = 180.0
             if s["calib_mode"]:
                 s["calib_peak"]              = tracked_y
                 s["calib_peak_torso"]        = torso_angle_val
@@ -78,6 +81,8 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
                 s["calib_peak_signed_torso"] = signed_torso_val
             if not s["calib_mode"] and tracked_y > s["descent_max_y"]:
                 s["descent_max_y"] = tracked_y
+            if not is_ohp and knee_angle < s["sq_descent_min_knee"]:
+                s["sq_descent_min_knee"] = knee_angle
             if exercise == "Deadlift":
                 # Rep is complete when the bar returns to the floor (knee angle reaches
                 # the starting reference). Only count if the user actually reached lockout
@@ -91,19 +96,24 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
                         s = _complete_rep(s, exercise)  # counts the rep
                     s["phase"]              = "ASCENDING"  # override STANDING set by _complete_rep
                     s["dl_reached_lockout"] = False  # reset for the next rep
-            elif delta < -ASCENT_THRESHOLD:
-                if s["calib_depth"] is not None:
-                    required = s["standing_tracked_y"] + (
-                        (s["calib_depth"] - s["standing_tracked_y"]) * DEPTH_RATIO
-                    )
-                    if s["descent_max_y"] < required:
-                        s["feedback"]       = "Insufficient depth — go lower before ascending"
-                        s["feedback_type"]  = "warn"
-                        s["prev_tracked_y"] = tracked_y
-                        return s
-                s["phase"]        = "ASCENDING"
-                s["asc_min_y"]    = tracked_y
-                s["descent_max_y"] = 0.0
+            else:
+                # Position-based ascent detection: hip has risen 2% above the lowest
+                # point reached during descent. Works for slow reps where per-frame
+                # velocity never crosses the old ASCENT_THRESHOLD.
+                bottom_ref = s["calib_peak"] if s["calib_mode"] else s["descent_max_y"]
+                if bottom_ref > 0 and tracked_y < bottom_ref - 0.02:
+                    if s["calib_depth"] is not None:
+                        required = s["standing_tracked_y"] + (
+                            (s["calib_depth"] - s["standing_tracked_y"]) * DEPTH_RATIO
+                        )
+                        if s["descent_max_y"] < required:
+                            s["feedback"]       = "Insufficient depth — go lower before ascending"
+                            s["feedback_type"]  = "warn"
+                            s["prev_tracked_y"] = tracked_y
+                            return s
+                    s["phase"]         = "ASCENDING"
+                    s["asc_min_y"]     = tracked_y
+                    s["descent_max_y"] = 0.0
 
     elif s["phase"] == "ASCENDING":
         if is_ohp:
@@ -143,7 +153,12 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
                     s["standing_knee_max"]  = 0.0
                     s["dl_reached_lockout"] = True
                 else:
-                    s = _complete_rep(s, exercise)
+                    if exercise == "Squat" and s["sq_descent_min_knee"] > SQUAT_DEPTH_KNEE_MIN:
+                        s["feedback"]      = "Go deeper — bend your knees further"
+                        s["feedback_type"] = "warn"
+                    else:
+                        s = _complete_rep(s, exercise)
+                        s["sq_descent_min_knee"] = 180.0
             elif tracked_y > s["asc_min_y"] + 0.04:
                 # Hip has dropped 4 % of frame from peak — genuine re-descent.
                 # Position-based so noise (~1 %) cannot trigger it.

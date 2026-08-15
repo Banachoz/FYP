@@ -9,7 +9,8 @@ RED_ZONES = {
     "torso_angle_max": 70,
 }
 
-DEVIATION_THRESHOLD          = 10
+DEVIATION_THRESHOLD          = 10   # degrees — forward_rounding check
+HIPS_FIRST_THRESHOLD         = 18   # degrees — hips_first needs more headroom at the bottom
 STANDING_HYPEREXT_THRESHOLD  =  8
 HIP_FORWARD_THRESHOLD        =  0.08
 HIP_ABSOLUTE_THRESHOLD       =  0.15
@@ -19,7 +20,7 @@ WRIST_VIS_MIN                =  0.40  # MediaPipe visibility cutoff — side-vie
 SETUP_TORSO_MIN              = 25     # degrees — gate for hip-shoulder height check at bottom
 
 
-def analyze(landmarks, baseline, phase, rep_count=0):
+def analyze(landmarks, baseline, phase, rep_count=0, bottom_ref_torso=None):
     """
     Conventional deadlift form analysis. FSM starts in ASCENDING (user grips bar at bottom).
     Ankle used as bar-position proxy.
@@ -135,9 +136,20 @@ def analyze(landmarks, baseline, phase, rep_count=0):
         if baseline and bst is not None:
             st         = signed_torso_angle(landmarks)
             signed_dev = direction * (st - bst)
-            if signed_dev > DEVIATION_THRESHOLD:
+            if signed_dev > HIPS_FIRST_THRESHOLD:
                 errors.append({
                     "type":     "hips_first",
+                    "priority": 1,
+                    "severity": "warning",
+                    "message":  "Hips rising too fast — drive chest and hips up together",
+                })
+        elif not baseline and bottom_ref_torso:
+            st      = signed_torso_angle(landmarks)
+            dir_b   = 1.0 if bottom_ref_torso >= 0 else -1.0
+            dev     = dir_b * (st - bottom_ref_torso)
+            if dev > DEVIATION_THRESHOLD:
+                errors.append({
+                    "type":     "calib_hips_first",
                     "priority": 1,
                     "severity": "warning",
                     "message":  "Hips rising too fast — drive chest and hips up together",
