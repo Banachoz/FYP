@@ -4,11 +4,12 @@ import cv2
 import mediapipe as mp
 import streamlit as st
 
-from core.angle_calculator import avg_knee_angle, tracked_y_for_exercise, torso_angle, signed_torso_angle, hip_ankle_offset
+from core.angle_calculator import avg_knee_angle, avg_elbow_angle, tracked_y_for_exercise, torso_angle, signed_torso_angle, hip_ankle_offset
 from core.phase_detector import run_fsm
 from core.tts_coach import TTSCoach
 import exercises.squat    as _squat
 import exercises.deadlift as _deadlift
+import exercises.ohp      as _ohp
 from ui.overlay import (
     apply_vignette, draw_pose, draw_hud,
     draw_countdown, draw_calibration_bar, draw_no_pose,
@@ -29,6 +30,8 @@ _TTS_ERROR_MAP = {
     "hips_too_high":        "Lower your hips",
     "shoulders_behind":     "Shoulders forward",
     "bar_too_far":          "Keep the bar close",
+    "back_arch":            "Avoid back arch",
+    "calib_arch":           "Avoid back arch",
 }
 
 
@@ -278,7 +281,7 @@ def _init_state():
     defaults = dict(
         is_counting_down=False,
         countdown_start=0.0,
-        phase="ASCENDING" if st.session_state.get("exercise", "Squat") == "Deadlift" else "STANDING",
+        phase="ASCENDING" if st.session_state.get("exercise", "Squat") in ("Deadlift", "Overhead Press") else "STANDING",
         rep_count=0,
         calib_mode=False,
         calib_reps_collected=0,
@@ -321,6 +324,7 @@ def _init_state():
         dl_at_bottom=False,
         dl_reached_lockout=False,
         sq_descent_min_knee=180.0,
+        ohp_bottom_ref=0.0,
         feedback_hold_until=0.0,
         held_feedback="",
         current_rep_errors=[],
@@ -341,7 +345,7 @@ ss = st.session_state
 
 
 def _initial_phase():
-    return "ASCENDING" if ss.exercise == "Deadlift" else "STANDING"
+    return "ASCENDING" if ss.exercise in ("Deadlift", "Overhead Press") else "STANDING"
 
 
 @st.cache_resource
@@ -392,6 +396,7 @@ def _pack_state():
         "dl_at_bottom":           ss.dl_at_bottom,
         "dl_reached_lockout":     ss.dl_reached_lockout,
         "sq_descent_min_knee":    ss.sq_descent_min_knee,
+        "ohp_bottom_ref":         ss.ohp_bottom_ref,
     }
 
 def _unpack_state(result):
@@ -433,6 +438,7 @@ def _unpack_state(result):
     ss.dl_at_bottom           = result["dl_at_bottom"]
     ss.dl_reached_lockout     = result["dl_reached_lockout"]
     ss.sq_descent_min_knee    = result["sq_descent_min_knee"]
+    ss.ohp_bottom_ref         = result["ohp_bottom_ref"]
     # Append rep log entry here — fires before st.rerun() so Calib 3 is never missed
     label = result["completed_rep_label"]
     if label:
@@ -501,6 +507,7 @@ def _calib_done_dialog():
             ss.bottom_knee_ref      = 0.0
             ss.dl_reached_lockout   = False
             ss.sq_descent_min_knee  = 180.0
+            ss.ohp_bottom_ref       = 0.0
             ss.phase                = _initial_phase()
             ss.is_counting_down     = True
             ss.countdown_start      = time.time()
@@ -645,6 +652,7 @@ with st.sidebar:
             ss.bottom_knee_ref      = 0.0
             ss.dl_reached_lockout   = False
             ss.sq_descent_min_knee  = 180.0
+            ss.ohp_bottom_ref       = 0.0
             ss.rep_count            = 0
             ss.phase                = _initial_phase()
             ss.is_counting_down     = True
@@ -777,6 +785,7 @@ if webcam_active:
 
                 ty  = tracked_y_for_exercise(lms, ss.exercise)
                 ka  = avg_knee_angle(lms)
+                _joint = avg_elbow_angle(lms) if ss.exercise == "Overhead Press" else ka
                 ta  = torso_angle(lms)
                 sta = signed_torso_angle(lms)
                 hao = hip_ankle_offset(lms)
@@ -787,7 +796,14 @@ if webcam_active:
                     if time_left > 0:
                         frame = draw_countdown(frame, time_left, w, h)
                     else:
-                        ss.is_counting_down = False
+                        ss.is_counting_down  = False
+                        # Sync prev_tracked_y to current position so delta = 0 on
+                        # the first FSM call — prevents spurious hip_trigger from
+                        # the 0.0 init value or stale position after the countdown.
+                        # Reset standing_knee_max so a stale accumulated max from
+                        # the pre-countdown standing period can't fire knee_trigger.
+                        ss.prev_tracked_y    = ty
+                        ss.standing_knee_max = 0.0
                         if ss.analysis_countdown:
                             ss.analysis_countdown = False
                             ss.feedback      = "Analysing form — begin your set"
@@ -799,12 +815,12 @@ if webcam_active:
                             ss.feedback_type = "calib"
                             if ss.voice_enabled:
                                 _tts.speak("Calibration started")
-                        _unpack_state(run_fsm(_pack_state(), ty, ka, ta, ss.exercise, sta, hao))
+                        _unpack_state(run_fsm(_pack_state(), ty, _joint, ta, ss.exercise, sta, hao))
                     # During countdown: draw skeleton/HUD but suppress all analysis UI
                     frame = draw_pose(frame, result, False)
                     frame = draw_hud(frame, ss.phase, ss.rep_count, ka, ta, ss.fps, w, h)
                 else:
-                    _unpack_state(run_fsm(_pack_state(), ty, ka, ta, ss.exercise, sta, hao))
+                    _unpack_state(run_fsm(_pack_state(), ty, _joint, ta, ss.exercise, sta, hao))
 
                     # Pause for set-complete dialog when target is reached
                     if ss.rep_target > 0 and not ss.calib_mode and ss.rep_count >= ss.rep_target:
@@ -815,11 +831,11 @@ if webcam_active:
 
                     fsm_feedback_type = ss.feedback_type
 
-                    # Form analysis — Squat and Deadlift.
+                    # Form analysis — Squat, Deadlift, Overhead Press.
                     # Tier 1 Red Zone checks run always; Tier 2 baseline checks only after calibration.
                     has_error      = False
                     _top_error_type = None
-                    if ss.exercise in ("Squat", "Deadlift"):
+                    if ss.exercise in ("Squat", "Deadlift", "Overhead Press"):
                         baseline = (
                             {
                                 "torso_angle":                 ss.calib_torso_angle,
@@ -830,12 +846,21 @@ if webcam_active:
                             }
                             if ss.calib_torso_angle is not None else None
                         )
-                        errors = (
-                            _squat.analyze(lms, baseline, ss.phase, ss.rep_count)
-                            if ss.exercise == "Squat" else
-                            _deadlift.analyze(lms, baseline, ss.phase, ss.rep_count,
-                                              bottom_ref_torso=ss.calib_peak_signed_torso if ss.calib_mode else None)
-                        )
+                        if ss.exercise == "Squat":
+                            # calib_peak_signed_torso resets to 0 when a rep completes;
+                            # use last completed rep's bottom angle instead (persists across reps).
+                            _sq_ref = (
+                                ss.calib_signed_torso_angles[-1]
+                                if ss.calib_mode and ss.calib_signed_torso_angles
+                                else ss.calib_peak_signed_torso if ss.calib_mode else None
+                            )
+                            errors = _squat.analyze(lms, baseline, ss.phase, ss.rep_count,
+                                                    bottom_ref_torso=_sq_ref)
+                        elif ss.exercise == "Deadlift":
+                            errors = _deadlift.analyze(lms, baseline, ss.phase, ss.rep_count,
+                                                       bottom_ref_torso=ss.calib_peak_signed_torso if ss.calib_mode else None)
+                        else:
+                            errors = _ohp.analyze(lms, baseline, ss.phase, ss.rep_count)
                         if errors:
                             _top_error_type  = errors[0]["type"]
                             ss.feedback      = errors[0]["message"]

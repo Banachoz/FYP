@@ -5,6 +5,7 @@ ASCENT_THRESHOLD     = 0.03
 STANDING_KNEE_MIN    = 165  # degrees — squat/deadlift "standing" check
 DEPTH_RATIO          = 0.90 # fraction of calibrated depth required before ascending is accepted
 SQUAT_DEPTH_KNEE_MIN = 130  # degrees — knee must reach this angle for a squat rep to count
+OHP_ELBOW_LOCKOUT    = 165  # degrees — elbow fully extended overhead
 
 
 def run_fsm(state: dict, tracked_y: float, knee_angle: float,
@@ -24,8 +25,8 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
         feedback, feedback_type, depth_ratio, prev_tracked_y, standing_tracked_y
 
     Returns a copy of state with updated values plus 'needs_rerun' bool.
-    OHP flow:  STANDING → ASCENDING (press up) → DESCENDING (lower) → STANDING
-    Squat/DL:  STANDING → DESCENDING (go down)  → ASCENDING (come up) → STANDING
+    OHP flow:  ASCENDING (press) → STANDING (lockout) → DESCENDING (lower) → ASCENDING
+    Squat/DL:  STANDING → DESCENDING (go down) → ASCENDING (come up) → STANDING
     """
     s      = {**state, "needs_rerun": False, "completed_rep_label": ""}
     prev   = s["prev_tracked_y"]
@@ -33,44 +34,64 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
     is_ohp = (exercise == "Overhead Press")
 
     if s["phase"] == "STANDING":
-        s["feedback"]      = _msg_standing(exercise)
-        s["feedback_type"] = "neutral"
-
-        if knee_angle > s["standing_knee_max"]:
-            s["standing_knee_max"] = knee_angle
-
-        if s["calib_mode"]:
-            s["standing_torso_buffer"].append(signed_torso_val)
-            s["standing_hao_buffer"].append(hip_ankle_offset_val)
-
-        hip_trigger  = (delta < -DESCENT_THRESHOLD) if is_ohp else (delta > DESCENT_THRESHOLD)
-        # Knee trigger: squat/DL only — catches knee-dominant starts where hip barely moves
-        knee_trigger = not is_ohp and (s["standing_knee_max"] - knee_angle) > 10
-
-        if hip_trigger or knee_trigger:
-            if s["calib_mode"] and s["standing_torso_buffer"]:
-                s["pre_rep_standing_torso"] = float(np.mean(s["standing_torso_buffer"]))
-                s["pre_rep_standing_hao"]   = float(np.mean(s["standing_hao_buffer"]))
-            s["standing_torso_buffer"] = []
-            s["standing_hao_buffer"]   = []
-            s["phase"]              = "ASCENDING" if is_ohp else "DESCENDING"
-            s["dl_at_bottom"]       = False
-            s["standing_tracked_y"] = prev
-            s["standing_knee_max"]  = 0.0
-            if not is_ohp:
-                s["sq_descent_min_knee"] = 180.0
+        if is_ohp:
+            # OHP STANDING = top of the press (bar overhead, elbows locked out).
+            # Collect torso/HAO for calibration baseline, then wait for bar to come down.
+            s["feedback"]      = "Lockout — lower the bar with control"
+            s["feedback_type"] = "neutral"
             if s["calib_mode"]:
-                s["calib_peak"]              = tracked_y
-                s["calib_peak_torso"]        = torso_angle_val
-                s["calib_peak_knee"]         = knee_angle
-                s["calib_peak_signed_torso"] = signed_torso_val
+                s["standing_torso_buffer"].append(signed_torso_val)
+                s["standing_hao_buffer"].append(hip_ankle_offset_val)
+            # Wrist Y increasing → bar coming down → enter DESCENDING
+            if delta > DESCENT_THRESHOLD:
+                if s["calib_mode"] and s["standing_torso_buffer"]:
+                    s["pre_rep_standing_torso"] = float(np.mean(s["standing_torso_buffer"]))
+                    s["pre_rep_standing_hao"]   = float(np.mean(s["standing_hao_buffer"]))
+                s["standing_torso_buffer"] = []
+                s["standing_hao_buffer"]   = []
+                s["phase"]              = "DESCENDING"
+                s["standing_tracked_y"] = prev
+        else:
+            s["feedback"]      = _msg_standing(exercise)
+            s["feedback_type"] = "neutral"
+
+            if knee_angle > s["standing_knee_max"]:
+                s["standing_knee_max"] = knee_angle
+
+            if s["calib_mode"]:
+                s["standing_torso_buffer"].append(signed_torso_val)
+                s["standing_hao_buffer"].append(hip_ankle_offset_val)
+
+            # Knee trigger: catches knee-dominant starts where hip barely moves
+            hip_trigger  = delta > DESCENT_THRESHOLD
+            knee_trigger = (s["standing_knee_max"] - knee_angle) > 10
+
+            if hip_trigger or knee_trigger:
+                if s["calib_mode"] and s["standing_torso_buffer"]:
+                    s["pre_rep_standing_torso"] = float(np.mean(s["standing_torso_buffer"]))
+                    s["pre_rep_standing_hao"]   = float(np.mean(s["standing_hao_buffer"]))
+                s["standing_torso_buffer"] = []
+                s["standing_hao_buffer"]   = []
+                s["phase"]              = "DESCENDING"
+                s["dl_at_bottom"]       = False
+                s["standing_tracked_y"] = prev
+                s["standing_knee_max"]  = 0.0
+                s["sq_descent_min_knee"] = 180.0
+                if s["calib_mode"]:
+                    s["calib_peak"]              = tracked_y
+                    s["calib_peak_torso"]        = torso_angle_val
+                    s["calib_peak_knee"]         = knee_angle
+                    s["calib_peak_signed_torso"] = signed_torso_val
 
     elif s["phase"] == "DESCENDING":
         if is_ohp:
             s["feedback"]      = "Lower the bar with control"
             s["feedback_type"] = "neutral"
-            if tracked_y >= s["standing_tracked_y"] - 0.05:
+            # Bar has returned to shoulder level → count rep, go back to ASCENDING
+            if s["ohp_bottom_ref"] > 0 and tracked_y >= s["ohp_bottom_ref"] - 0.05:
+                s["ohp_bottom_ref"] = tracked_y  # refresh for next rep
                 s = _complete_rep(s, exercise)
+                s["phase"] = "ASCENDING"  # override STANDING set by _complete_rep
         else:
             s["feedback"]      = _msg_descending(exercise)
             s["feedback_type"] = "neutral"
@@ -119,11 +140,17 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
         if is_ohp:
             s["feedback"]      = "Press to full lockout overhead"
             s["feedback_type"] = "neutral"
-            if s["calib_mode"] and tracked_y < s["calib_peak"]:
-                s["calib_peak"]       = tracked_y
-                s["calib_peak_torso"] = torso_angle_val
-            if delta > ASCENT_THRESHOLD:
-                s["phase"] = "DESCENDING"
+            # Set shoulder-level reference on very first frame
+            if s["ohp_bottom_ref"] == 0.0:
+                s["ohp_bottom_ref"] = tracked_y
+            # Track worst back arch during the press for calibration
+            if s["calib_mode"] and torso_angle_val > s["calib_peak_torso"]:
+                s["calib_peak_torso"]        = torso_angle_val
+                s["calib_peak_signed_torso"] = signed_torso_val
+                s["calib_peak_knee"]         = knee_angle
+            # Elbow lockout detected → bar is overhead
+            if knee_angle >= OHP_ELBOW_LOCKOUT:
+                s["phase"] = "STANDING"
         else:
             s["feedback"]      = _msg_ascending(exercise)
             s["feedback_type"] = "neutral"
