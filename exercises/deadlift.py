@@ -47,7 +47,12 @@ def analyze(landmarks, baseline, phase, rep_count=0, bottom_ref_torso=None):
     if phase == "STANDING":
         live_offset = hip_ankle_offset(landmarks)
         if not baseline:
-            if abs(live_offset) > HIP_ABSOLUTE_THRESHOLD:
+            if bottom_ref_torso:
+                dir_live = 1.0 if bottom_ref_torso >= 0 else -1.0
+                hip_fwd_condition = dir_live * live_offset > HIP_ABSOLUTE_THRESHOLD
+            else:
+                hip_fwd_condition = abs(live_offset) > HIP_ABSOLUTE_THRESHOLD
+            if hip_fwd_condition:
                 return [{
                     "type":     "hip_forward_absolute",
                     "priority": 1,
@@ -68,18 +73,17 @@ def analyze(landmarks, baseline, phase, rep_count=0, bottom_ref_torso=None):
                         "message":  "Hips pushing forward at lockout — brace your core and stand tall",
                     }]
 
-            if rep_count > 0:
-                bsst = baseline.get("signed_torso_standing_angle")
-                if bsst is not None:
-                    st  = signed_torso_angle(landmarks)
-                    dev = direction * (st - bsst)
-                    if dev < -STANDING_HYPEREXT_THRESHOLD:
-                        return [{
-                            "type":     "hyperextension",
-                            "priority": 1,
-                            "severity": "warning",
-                            "message":  "Hyperextension at lockout — brace your core and stand tall",
-                        }]
+            bsst = baseline.get("signed_torso_standing_angle")
+            if bsst is not None:
+                st  = signed_torso_angle(landmarks)
+                dev = direction * (st - bsst)
+                if dev < -STANDING_HYPEREXT_THRESHOLD:
+                    return [{
+                        "type":     "hyperextension",
+                        "priority": 1,
+                        "severity": "warning",
+                        "message":  "Hyperextension at lockout — brace your core and stand tall",
+                    }]
         return []
 
     # ASCENDING and DESCENDING — movement checks

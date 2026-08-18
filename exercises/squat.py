@@ -12,12 +12,12 @@ RED_ZONES = {
 }
 
 DEVIATION_THRESHOLD          = 10    # degrees from personal baseline (descent checks)
-STANDING_HYPEREXT_THRESHOLD  =  8    # degrees — torso lean backward from calibrated standing
+STANDING_HYPEREXT_THRESHOLD  =  7    # degrees — torso lean backward from calibrated standing
 HIP_FORWARD_THRESHOLD        =  0.08 # torso-normalised+aspect-corrected — ~5 cm push at 2 m (relative)
 HIP_ABSOLUTE_THRESHOLD       =  0.12 # torso-normalised+aspect-corrected — ~5 cm total lean (absolute)
 
 
-def analyze(landmarks, baseline, phase, rep_count=0):  # noqa: C901
+def analyze(landmarks, baseline, phase, rep_count=0, bottom_ref_torso=None):  # noqa: C901
     """
     Returns a priority-sorted list of form error dicts.
     Caller displays errors[0] in the feedback box; all errors are logged per rep.
@@ -36,7 +36,12 @@ def analyze(landmarks, baseline, phase, rep_count=0):  # noqa: C901
         if not baseline:
             if _dbg == 0:
                 print(f"[hip_abs] live={live_offset:.3f}  threshold={HIP_ABSOLUTE_THRESHOLD}")
-            if abs(live_offset) > HIP_ABSOLUTE_THRESHOLD:
+            if bottom_ref_torso:
+                dir_live = 1.0 if bottom_ref_torso >= 0 else -1.0
+                hip_fwd_condition = dir_live * live_offset > HIP_ABSOLUTE_THRESHOLD
+            else:
+                hip_fwd_condition = abs(live_offset) > HIP_ABSOLUTE_THRESHOLD
+            if hip_fwd_condition:
                 return [{
                     "type":     "hip_forward_absolute",
                     "priority": 1,
@@ -63,22 +68,20 @@ def analyze(landmarks, baseline, phase, rep_count=0):  # noqa: C901
                         "message":  "Hips pushing forward at lockout — avoid overextending your lower back",
                     }]
 
-            # Check 2 — shoulder lean backward; only after first rep so the
-            # standing reference has been exercised at least once
-            if rep_count > 0:
-                bsst = baseline.get("signed_torso_standing_angle")
-                if bsst is not None:
-                    st      = signed_torso_angle(landmarks)
-                    dev_ht  = direction * (st - bsst)
-                    if _dbg == 0:
-                        print(f"[hyperext] st={st:.1f}  bsst={bsst:.1f}  dev={dev_ht:.1f}  threshold={-STANDING_HYPEREXT_THRESHOLD}  dir={direction:.0f}")
-                    if dev_ht < -STANDING_HYPEREXT_THRESHOLD:
-                        return [{
-                            "type":     "hyperextension",
-                            "priority": 1,
-                            "severity": "warning",
-                            "message":  "Hyperextension at lockout — brace your core and tuck your pelvis",
-                        }]
+            # Check 2 — shoulder lean backward
+            bsst = baseline.get("signed_torso_standing_angle")
+            if bsst is not None:
+                st      = signed_torso_angle(landmarks)
+                dev_ht  = direction * (st - bsst)
+                if _dbg == 0:
+                    print(f"[hyperext] st={st:.1f}  bsst={bsst:.1f}  dev={dev_ht:.1f}  threshold={-STANDING_HYPEREXT_THRESHOLD}  dir={direction:.0f}")
+                if dev_ht < -STANDING_HYPEREXT_THRESHOLD:
+                    return [{
+                        "type":     "hyperextension",
+                        "priority": 1,
+                        "severity": "warning",
+                        "message":  "Hyperextension at lockout — brace your core and tuck your pelvis",
+                    }]
         return []
 
     errors = []
@@ -106,7 +109,7 @@ def analyze(landmarks, baseline, phase, rep_count=0):  # noqa: C901
                 "message":  "Back rounding on the way down — chest up, brace your core",
             })
         # Hip hinge without knee bend: valid in both phases
-        if phase == "DESCENDING" and ka > 150 and ta > 35:
+        if phase == "DESCENDING" and ka > 140 and ta > 30:
             errors.append({
                 "type":     "calib_hip",
                 "priority": 2,
