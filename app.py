@@ -333,6 +333,7 @@ def _init_state():
         countdown_duration=5,
         rep_target=0,
         set_just_completed=False,
+        set_stopped=False,
         voice_enabled=True,
         analysis_countdown=False,
     )
@@ -473,7 +474,7 @@ def _calib_done_dialog():
     st.markdown("---")
     rep_target_val = st.number_input(
         "Target reps per set (0 = unlimited)",
-        min_value=0, max_value=200, value=ss.rep_target, step=1,
+        min_value=0, max_value=200, value=ss.rep_target if ss.rep_target > 0 else 3, step=1,
         help="The system will pause and prompt you when you reach this count. Set 0 for no limit.",
     )
     col_a, col_b = st.columns(2)
@@ -585,6 +586,81 @@ def _set_done_dialog():
             st.rerun()
 
 
+# SET STOPPED — user hit Stop mid-set
+def _stopped_dialog():
+    st.markdown(
+        '<div class="fb fb-warn"><i class="fa-solid fa-hand"></i>'
+        f'SET STOPPED — {ss.rep_count} rep{"s" if ss.rep_count != 1 else ""} completed</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+    analysis_entries = [e for e in ss.rep_log if e.startswith("Rep")]
+    if analysis_entries:
+        st.markdown("**Reps completed:**")
+        for entry in analysis_entries:
+            is_good = "Good form" in entry
+            icon, color = ("✓", "green") if is_good else ("✗", "red")
+            st.markdown(f":{color}[{icon} {entry}]")
+    st.markdown("---")
+    new_target = st.number_input(
+        "Target reps for next set",
+        min_value=1, max_value=200, value=max(ss.rep_target, 3), step=1,
+    )
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("Restart Analysis", type="primary", use_container_width=True):
+            ss.rep_target         = new_target
+            ss.rep_count          = 0
+            ss.current_rep_errors = []
+            ss.rep_log            = []
+            ss.set_stopped        = False
+            ss.phase              = _initial_phase()
+            ss.is_counting_down   = True
+            ss.countdown_start    = time.time()
+            ss.analysis_countdown = True
+            ss.feedback           = f"Get ready — analysis starts in {ss.countdown_duration}s"
+            ss.feedback_type      = "calib"
+            st.rerun()
+    with col_b:
+        if st.button("Re-calibrate", use_container_width=True):
+            ss.set_stopped                        = False
+            ss.calib_mode                         = True
+            ss.calib_reps_collected               = 0
+            ss.calib_depths                       = []
+            ss.calib_depth                        = None
+            ss.calib_peak                         = 0.0
+            ss.calib_peak_torso                   = 0.0
+            ss.calib_peak_knee                    = 180.0
+            ss.calib_peak_signed_torso            = 0.0
+            ss.calib_torso_angles                 = []
+            ss.calib_knee_angles                  = []
+            ss.calib_signed_torso_angles          = []
+            ss.calib_standing_signed_torso_angles = []
+            ss.calib_torso_angle                  = None
+            ss.calib_knee_angle                   = None
+            ss.calib_signed_torso_angle           = None
+            ss.calib_standing_signed_torso_angle  = None
+            ss.last_signed_torso_val              = 0.0
+            ss.last_hip_ankle_offset              = 0.0
+            ss.calib_hip_ankle_offsets            = []
+            ss.calib_hip_ankle_offset             = None
+            ss.calib_just_completed               = False
+            ss.rep_count            = 0
+            ss.current_rep_errors   = []
+            ss.rep_log              = []
+            ss.rep_target           = 0
+            ss.bottom_knee_ref      = 0.0
+            ss.dl_reached_lockout   = False
+            ss.sq_descent_min_knee  = 180.0
+            ss.ohp_bottom_ref       = 0.0
+            ss.phase                = _initial_phase()
+            ss.is_counting_down     = True
+            ss.countdown_start      = time.time()
+            ss.feedback             = f"Get into position — calibration starts in {ss.countdown_duration}s"
+            ss.feedback_type        = "calib"
+            st.rerun()
+
+
 # SIDEBAR
 with st.sidebar:
     st.markdown('<div class="wordmark">FORM<span>CHECKER</span></div>', unsafe_allow_html=True)
@@ -666,6 +742,20 @@ with st.sidebar:
             _init_state()
             st.rerun()
 
+    # STOP button — only visible during active analysis
+    _analysis_active = (
+        ss.calib_depth is not None
+        and not ss.calib_mode
+        and not ss.calib_just_completed
+        and not ss.set_just_completed
+        and not ss.set_stopped
+    )
+    if _analysis_active:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("⏹ Stop Set", use_container_width=True):
+            ss.set_stopped = True
+            st.rerun()
+
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="section-label"><i class="fa-solid fa-volume-high"></i> Voice</div>', unsafe_allow_html=True)
     ss.voice_enabled = st.toggle("Voice coaching", value=ss.voice_enabled, label_visibility="collapsed")
@@ -706,6 +796,10 @@ if ss.calib_just_completed:
 
 if ss.set_just_completed:
     _set_done_dialog()
+    st.stop()
+
+if ss.set_stopped:
+    _stopped_dialog()
     st.stop()
 
 if not ss.calib_ever_started:
