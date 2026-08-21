@@ -1,6 +1,6 @@
 from core.angle_calculator import (
     torso_angle, signed_torso_angle, hip_ankle_offset,
-    shoulder_ankle_offset, wrist_shoulder_offset,
+    shoulder_ankle_offset, wrist_shoulder_offset, facing_direction,
     LEFT_HIP, RIGHT_HIP, LEFT_SHOULDER, RIGHT_SHOULDER,
     LEFT_WRIST, RIGHT_WRIST,
 )
@@ -51,7 +51,11 @@ def analyze(landmarks, baseline, phase, rep_count=0, bottom_ref_torso=None):
                 dir_live = 1.0 if bottom_ref_torso >= 0 else -1.0
                 hip_fwd_condition = dir_live * live_offset > HIP_ABSOLUTE_THRESHOLD
             else:
-                hip_fwd_condition = abs(live_offset) > HIP_ABSOLUTE_THRESHOLD
+                _fd = facing_direction(landmarks)
+                if _fd is not None:
+                    hip_fwd_condition = _fd * live_offset > HIP_ABSOLUTE_THRESHOLD
+                else:
+                    hip_fwd_condition = abs(live_offset) > HIP_ABSOLUTE_THRESHOLD
             if hip_fwd_condition:
                 return [{
                     "type":     "hip_forward_absolute",

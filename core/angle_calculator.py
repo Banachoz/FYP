@@ -16,6 +16,12 @@ LEFT_ELBOW     = _LM.LEFT_ELBOW.value
 RIGHT_ELBOW    = _LM.RIGHT_ELBOW.value
 LEFT_WRIST     = _LM.LEFT_WRIST.value
 RIGHT_WRIST    = _LM.RIGHT_WRIST.value
+LEFT_HEEL      = _LM.LEFT_HEEL.value
+RIGHT_HEEL     = _LM.RIGHT_HEEL.value
+LEFT_FOOT_INDEX  = _LM.LEFT_FOOT_INDEX.value
+RIGHT_FOOT_INDEX = _LM.RIGHT_FOOT_INDEX.value
+
+_FOOT_VIS_MIN = 0.5
 
 
 def lm_xy(landmarks, idx):
@@ -103,6 +109,28 @@ def signed_torso_angle(landmarks):
     hx = (landmarks[LEFT_HIP].x     + landmarks[RIGHT_HIP].x)      / 2
     hy = (landmarks[LEFT_HIP].y     + landmarks[RIGHT_HIP].y)      / 2
     return math.degrees(math.atan2(sx - hx, hy - sy))
+
+
+def facing_direction(landmarks):
+    """Returns +1.0 (facing right), -1.0 (facing left), or None if foot landmarks
+    aren't confident enough. Uses whichever foot (left, right, or both) clears
+    the visibility threshold. Falls back to None so callers can use abs() instead."""
+    lfi = landmarks[LEFT_FOOT_INDEX]
+    rfi = landmarks[RIGHT_FOOT_INDEX]
+    lh  = landmarks[LEFT_HEEL]
+    rh  = landmarks[RIGHT_HEEL]
+    l_vis = min(lfi.visibility, lh.visibility)
+    r_vis = min(rfi.visibility, rh.visibility)
+    if l_vis < _FOOT_VIS_MIN and r_vis < _FOOT_VIS_MIN:
+        return None
+    if l_vis >= _FOOT_VIS_MIN and r_vis >= _FOOT_VIS_MIN:
+        toe_x  = (lfi.x + rfi.x) / 2
+        heel_x = (lh.x  + rh.x)  / 2
+    elif l_vis >= _FOOT_VIS_MIN:
+        toe_x, heel_x = lfi.x, lh.x
+    else:
+        toe_x, heel_x = rfi.x, rh.x
+    return 1.0 if toe_x > heel_x else -1.0
 
 
 def avg_elbow_angle(landmarks):
