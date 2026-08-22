@@ -1,17 +1,20 @@
 from core.angle_calculator import (
-    torso_angle, signed_torso_angle, hip_ankle_offset, facing_direction,
-    LEFT_HIP, RIGHT_HIP,
+    torso_angle, signed_torso_angle, hip_ankle_offset,
+    wrist_shoulder_offset, facing_direction,
+    LEFT_HIP, RIGHT_HIP, LEFT_WRIST, RIGHT_WRIST,
 )
 
 RED_ZONES = {
     "torso_angle_max": 30,  # OHP: some backward lean is expected; underreporting means ~35° physical
 }
 
-DEVIATION_THRESHOLD         = 10   # degrees above calibrated peak lean — back arch during press
-STANDING_HYPEREXT_THRESHOLD =  8
+DEVIATION_THRESHOLD         = 3   # degrees above calibrated peak lean — back arch during press
+STANDING_HYPEREXT_THRESHOLD =  5
 HIP_FORWARD_THRESHOLD       =  0.08
-HIP_ABSOLUTE_THRESHOLD      =  0.12
-CALIB_ARCH_THRESHOLD        = 15   # degrees — pre-calib absolute arch check
+HIP_ABSOLUTE_THRESHOLD      =  0.11
+CALIB_ARCH_THRESHOLD        =  6   # pre-calib absolute arch check
+WRIST_FORWARD_THRESHOLD     =  0.10 # wrists in front of shoulders at lockout, raise to mmake it looser
+WRIST_VIS_MIN               =  0.40 # MediaPipe visibility cutoff
 
 
 def analyze(landmarks, baseline, phase, rep_count=0):
@@ -24,11 +27,15 @@ def analyze(landmarks, baseline, phase, rep_count=0):
     Tier 2  — Personal baseline deviation (post-calibration)
     """
     if phase == "STANDING":
+        # Direction from foot landmarks — reliable for OHP because calib_signed_torso_angle
+        # captures backward lean (OHP arch), which has the opposite sign to the forward lean
+        # used by squat/deadlift. Foot-based direction has no such ambiguity.
+        direction = facing_direction(landmarks)
+
         live_offset = hip_ankle_offset(landmarks)
         if not baseline:
-            _fd = facing_direction(landmarks)
-            if _fd is not None:
-                hip_fwd_condition = _fd * live_offset > HIP_ABSOLUTE_THRESHOLD
+            if direction is not None:
+                hip_fwd_condition = direction * live_offset > HIP_ABSOLUTE_THRESHOLD
             else:
                 hip_fwd_condition = abs(live_offset) > HIP_ABSOLUTE_THRESHOLD
             if hip_fwd_condition:
@@ -39,11 +46,8 @@ def analyze(landmarks, baseline, phase, rep_count=0):
                     "message":  "Hips pushing forward — stand tall and brace your core",
                 }]
         if baseline:
-            bst_dir   = baseline.get("signed_torso_angle")
-            direction = 1.0 if (bst_dir or 0) >= 0 else -1.0
-
             calib_offset = baseline.get("hip_ankle_offset")
-            if calib_offset is not None:
+            if calib_offset is not None and direction is not None:
                 if direction * (live_offset - calib_offset) > HIP_FORWARD_THRESHOLD:
                     return [{
                         "type":     "hip_forward",
@@ -53,7 +57,7 @@ def analyze(landmarks, baseline, phase, rep_count=0):
                     }]
 
             bsst = baseline.get("signed_torso_standing_angle")
-            if bsst is not None:
+            if bsst is not None and direction is not None:
                 st  = signed_torso_angle(landmarks)
                 dev = direction * (st - bsst)
                 if dev < -STANDING_HYPEREXT_THRESHOLD:
@@ -63,6 +67,19 @@ def analyze(landmarks, baseline, phase, rep_count=0):
                         "severity": "warning",
                         "message":  "Excessive lower back arch — brace your core and tuck your pelvis",
                     }]
+
+        # Wrist position check — bar should be directly overhead or slightly behind shoulders
+        lw_vis = landmarks[LEFT_WRIST].visibility
+        rw_vis = landmarks[RIGHT_WRIST].visibility
+        if min(lw_vis, rw_vis) > WRIST_VIS_MIN and direction is not None:
+            wso = wrist_shoulder_offset(landmarks)
+            if direction * wso > WRIST_FORWARD_THRESHOLD:
+                return [{
+                    "type":     "wrist_too_forward",
+                    "priority": 2,
+                    "severity": "warning",
+                    "message":  "Bar too far forward — press directly overhead or slightly behind",
+                }]
         return []
 
     # ASCENDING and DESCENDING

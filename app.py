@@ -32,6 +32,7 @@ _TTS_ERROR_MAP = {
     "bar_too_far":          "Keep the bar close",
     "back_arch":            "Avoid back arch",
     "calib_arch":           "Avoid back arch",
+    "wrist_too_forward":    "Bar too far forward",
 }
 
 
