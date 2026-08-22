@@ -15,7 +15,8 @@ STANDING_HYPEREXT_THRESHOLD  =  8
 HIP_FORWARD_THRESHOLD        =  0.08
 HIP_ABSOLUTE_THRESHOLD       =  0.15
 SHOULDER_ANKLE_THRESHOLD     =  0.05  # torso-normalised
-WRIST_FORWARD_THRESHOLD      =  0.10  # torso-normalised — wrists must not be forward of shoulders
+WRIST_FORWARD_THRESHOLD      =  0.07  # torso-normalised — wrists must not be forward of shoulders (full side view)
+# WRIST_FORWARD_THRESHOLD      =  0.10  # torso-normalised — wrists must not be forward of shoulders (slightly facing cam)
 WRIST_VIS_MIN                =  0.40  # MediaPipe visibility cutoff — side-view occludes wrists more often
 SETUP_TORSO_MIN              = 25     # degrees — gate for hip-shoulder height check at bottom
 

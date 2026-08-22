@@ -13,9 +13,9 @@ RED_ZONES = {
 }
 
 DEVIATION_THRESHOLD          = 10    # degrees from personal baseline (descent checks)
-STANDING_HYPEREXT_THRESHOLD  =  7    # degrees — torso lean backward from calibrated standing
+STANDING_HYPEREXT_THRESHOLD  =  5    # degrees — torso lean backward from calibrated standing
 HIP_FORWARD_THRESHOLD        =  0.08 # torso-normalised+aspect-corrected — ~5 cm push at 2 m (relative)
-HIP_ABSOLUTE_THRESHOLD       =  0.12 # torso-normalised+aspect-corrected — ~5 cm total lean (absolute)
+HIP_ABSOLUTE_THRESHOLD       =  0.11 # torso-normalised+aspect-corrected — ~5 cm total lean (absolute)
 
 
 def analyze(landmarks, baseline, phase, rep_count=0, bottom_ref_torso=None):  # noqa: C901
