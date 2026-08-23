@@ -7,6 +7,7 @@ import streamlit as st
 from core.angle_calculator import avg_knee_angle, avg_elbow_angle, tracked_y_for_exercise, torso_angle, signed_torso_angle, hip_ankle_offset
 from core.phase_detector import run_fsm
 from core.tts_coach import TTSCoach
+from core.rep_sound import RepSound
 import exercises.squat    as _squat
 import exercises.deadlift as _deadlift
 import exercises.ohp      as _ohp
@@ -33,6 +34,7 @@ _TTS_ERROR_MAP = {
     "back_arch":            "Avoid back arch",
     "calib_arch":           "Avoid back arch",
     "wrist_too_forward":    "Bar too far forward",
+    "knee_bend":            "Avoid leg drive",
 }
 
 
@@ -354,7 +356,12 @@ def _initial_phase():
 def _get_tts_coach() -> TTSCoach:
     return TTSCoach()
 
-_tts = _get_tts_coach()
+@st.cache_resource
+def _get_rep_sound() -> RepSound:
+    return RepSound()
+
+_tts       = _get_tts_coach()
+_rep_sound = _get_rep_sound()
 
 
 # FSM HELPERS — pack/unpack session state to/from the pure FSM dict
@@ -447,6 +454,7 @@ def _unpack_state(result):
         summary = f"{label} — {' · '.join(ss.current_rep_errors)}" if ss.current_rep_errors else f"{label} — Good form"
         ss.rep_log.append(summary)
         ss.current_rep_errors = []
+        _rep_sound.play()
     if result["needs_rerun"]:
         ss.calib_just_completed = True
         if ss.voice_enabled:
@@ -917,6 +925,12 @@ if webcam_active:
                 else:
                     _unpack_state(run_fsm(_pack_state(), ty, _joint, ta, ss.exercise, sta, hao))
 
+                    # Hold FSM-level warnings (e.g. insufficient depth, go deeper) so they
+                    # stay visible after the phase transitions and overwrites the feedback.
+                    if ss.feedback_type == "warn":
+                        ss.feedback_hold_until = now + 2.0
+                        ss.held_feedback = ss.feedback
+
                     # Pause for set-complete dialog when target is reached
                     if ss.rep_target > 0 and not ss.calib_mode and ss.rep_count >= ss.rep_target:
                         ss.set_just_completed = True
@@ -978,7 +992,8 @@ if webcam_active:
                         _prev_tts_phase       = ss.phase
                         _spoken_this_phase    = False
                         _spoken_depth_warning = False
-                    if ss.feedback == "Insufficient depth — go lower before ascending":
+                    if ss.feedback in ("Insufficient depth — go lower before ascending",
+                                       "Go deeper — bend your knees further"):
                         if not _spoken_depth_warning and ss.voice_enabled:
                             _tts.speak("Go deeper")
                             _spoken_depth_warning = True
