@@ -42,8 +42,11 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
             if s["calib_mode"]:
                 s["standing_torso_buffer"].append(signed_torso_val)
                 s["standing_hao_buffer"].append(hip_ankle_offset_val)
-            # Wrist Y increasing → bar coming down → enter DESCENDING
-            if delta > DESCENT_THRESHOLD:
+            # Track the peak lockout position (minimum wrist Y) for position-based descent detection.
+            if tracked_y < s["asc_min_y"]:
+                s["asc_min_y"] = tracked_y
+            # Velocity OR position: bar coming down (position check catches slow descent).
+            if delta > DESCENT_THRESHOLD or tracked_y > s["asc_min_y"] + 0.03:
                 if s["calib_mode"] and s["standing_torso_buffer"]:
                     s["pre_rep_standing_torso"] = float(np.mean(s["standing_torso_buffer"]))
                     s["pre_rep_standing_hao"]   = float(np.mean(s["standing_hao_buffer"]))
@@ -51,6 +54,7 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
                 s["standing_hao_buffer"]   = []
                 s["phase"]              = "DESCENDING"
                 s["standing_tracked_y"] = prev
+                s["asc_min_y"]          = 99.0
         else:
             s["feedback"]      = _msg_standing(exercise)
             s["feedback_type"] = "neutral"
@@ -181,8 +185,12 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
                     s["dl_reached_lockout"] = True
                 else:
                     if exercise == "Squat" and s["sq_descent_min_knee"] > SQUAT_DEPTH_KNEE_MIN:
-                        s["feedback"]      = "Go deeper — bend your knees further"
-                        s["feedback_type"] = "warn"
+                        s["feedback"]            = "Go deeper — bend your knees further"
+                        s["feedback_type"]       = "warn"
+                        s["phase"]               = "STANDING"
+                        s["asc_min_y"]           = 99.0
+                        s["sq_descent_min_knee"] = 180.0
+                        s["standing_knee_max"]   = 0.0
                     else:
                         s = _complete_rep(s, exercise)
                         s["sq_descent_min_knee"] = 180.0
@@ -247,7 +255,7 @@ def _msg_standing(exercise):
     return {
         "Squat":          "Begin your squat — descend when ready",
         "Deadlift":       "Hinge at the hips and reach for the bar",
-        "Overhead Press": "Grip the bar — press overhead when ready",
+        "Overhead Press": "Grip the bar then press overhead when ready",
     }.get(exercise, "Begin when ready")
 
 

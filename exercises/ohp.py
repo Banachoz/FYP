@@ -1,7 +1,7 @@
 from core.angle_calculator import (
     torso_angle, signed_torso_angle, hip_ankle_offset,
-    wrist_shoulder_offset, facing_direction,
-    LEFT_HIP, RIGHT_HIP, LEFT_WRIST, RIGHT_WRIST,
+    wrist_shoulder_offset, facing_direction, avg_knee_angle,
+    LEFT_WRIST, RIGHT_WRIST,
 )
 
 RED_ZONES = {
@@ -13,8 +13,9 @@ STANDING_HYPEREXT_THRESHOLD =  5
 HIP_FORWARD_THRESHOLD       =  0.08
 HIP_ABSOLUTE_THRESHOLD      =  0.11
 CALIB_ARCH_THRESHOLD        =  6   # pre-calib absolute arch check
-WRIST_FORWARD_THRESHOLD     =  0.10 # wrists in front of shoulders at lockout, raise to mmake it looser
+WRIST_FORWARD_THRESHOLD     =  0.12 # wrists in front of shoulders at lockout, raise to make it looser
 WRIST_VIS_MIN               =  0.40 # MediaPipe visibility cutoff
+KNEE_BEND_THRESHOLD         = 173   # degrees — knees must stay near-straight during press
 
 
 def analyze(landmarks, baseline, phase, rep_count=0):
@@ -113,6 +114,16 @@ def analyze(landmarks, baseline, phase, rep_count=0):
                     "severity": "warning",
                     "message":  "Excessive back arch — brace your core and keep a neutral spine",
                 })
+
+    if phase == "ASCENDING":
+        ka = avg_knee_angle(landmarks)
+        if ka < KNEE_BEND_THRESHOLD:
+            errors.append({
+                "type":     "knee_bend",
+                "priority": 2,
+                "severity": "warning",
+                "message":  "Knees bending — avoid using leg drive on a strict press",
+            })
 
     errors.sort(key=lambda x: x["priority"])
     return errors
