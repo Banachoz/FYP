@@ -1,5 +1,9 @@
 import base64
+import json
+import os
 import time
+from datetime import datetime
+
 import cv2
 import mediapipe as mp
 import streamlit as st
@@ -15,6 +19,26 @@ from ui.overlay import (
     apply_vignette, draw_pose, draw_hud,
     draw_countdown, draw_calibration_bar, draw_no_pose,
 )
+
+_VIOLATION_LABELS = {
+    "forward_rounding":     "Back Rounding",
+    "calib_lean":           "Back Rounding",
+    "hips_first":           "Hips Rising First",
+    "calib_hips_first":     "Hips Rising First",
+    "hip_forward":          "Hips Pushing Forward",
+    "hip_forward_absolute": "Hips Pushing Forward",
+    "hyperextension":       "Hyperextension",
+    "knee_travel":          "Excessive Knee Travel",
+    "back_arch":            "Back Arch",
+    "calib_arch":           "Back Arch",
+    "wrist_too_forward":    "Bar Too Far Forward",
+    "bar_too_far":          "Bar Drifting From Body",
+    "shoulders_behind":     "Shoulders Behind Bar",
+    "hips_too_high":        "Hips Too High at Setup",
+    "knee_bend":            "Leg Drive",
+    "red_zone_spine":       "Critical Spine Danger",
+    "calib_hip":            "Hips Without Knee Bend",
+}
 
 _TTS_ERROR_MAP = {
     "red_zone_spine":       "Stop. Forward lean",
@@ -339,6 +363,10 @@ def _init_state():
         set_stopped=False,
         voice_enabled=True,
         analysis_countdown=False,
+        snapshots=[],
+        snapshot_keys=set(),
+        show_snapshot_dashboard=False,
+        scroll_to_top=False,
     )
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -463,6 +491,105 @@ def _unpack_state(result):
 
 
 # CALIBRATION COMPLETE — inline page (replaces @st.dialog to avoid Streamlit fragment close bug)
+def _burn_annotation(frame, violation_label, rep, phase):
+    """Burn rep/phase/violation text with a background rect onto the frame in-place."""
+    text  = f"Rep {rep}  |  {phase}  |  {violation_label}"
+    font  = cv2.FONT_HERSHEY_SIMPLEX
+    scale, thickness = 0.55, 1
+    (tw, th), baseline = cv2.getTextSize(text, font, scale, thickness)
+    h = frame.shape[0]
+    x, y = 10, h - 12
+    cv2.rectangle(frame, (x - 4, y - th - baseline - 4), (x + tw + 4, y + 4), (0, 0, 0), -1)
+    cv2.putText(frame, text, (x, y - baseline), font, scale, (0, 165, 255), thickness, cv2.LINE_AA)
+
+
+def _snapshot_dashboard():
+    if st.button("← Go Back", use_container_width=False):
+        ss.show_snapshot_dashboard = False
+        ss.set_just_completed      = True
+        st.rerun()
+
+    reps_with_errors = len(set(s["rep"] for s in ss.snapshots))
+    reps_clean       = ss.rep_count - reps_with_errors
+
+    st.markdown(f"### {ss.exercise} — Set Review")
+    if ss.snapshots:
+        st.markdown(
+            f"**{ss.rep_count} reps completed — "
+            f"{reps_clean}/{ss.rep_count} clean, "
+            f"{reps_with_errors}/{ss.rep_count} with errors**"
+        )
+        by_rep = {}
+        for snap in ss.snapshots:
+            by_rep.setdefault(snap["rep"], []).append(snap)
+
+        for rep_num in sorted(by_rep):
+            st.markdown(f"---\n**Rep {rep_num}**")
+            snaps = by_rep[rep_num]
+            cols  = st.columns(min(len(snaps), 3))
+            for i, snap in enumerate(snaps):
+                with cols[i % 3]:
+                    rgb = cv2.cvtColor(snap["frame"], cv2.COLOR_BGR2RGB)
+                    st.image(rgb, use_container_width=True)
+                    st.caption(
+                        f"**{snap['violation_label']}**  \n"
+                        f"{snap['phase']}  \n"
+                        f"_{snap['message']}_"
+                    )
+    else:
+        st.success("No form errors detected — great work!")
+
+    st.markdown("---")
+    col_save, col_retry = st.columns(2)
+    with col_save:
+        save_label = "Save Session" if ss.snapshots else "Save Log"
+        if st.button(save_label, type="primary", use_container_width=True, disabled=not ss.snapshots):
+            session_dir = os.path.join(
+                "sessions",
+                datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
+            )
+            os.makedirs(session_dir, exist_ok=True)
+            records = []
+            for snap in ss.snapshots:
+                fname    = f"rep{snap['rep']}_{snap['phase']}_{snap['violation_type']}.jpg"
+                fpath    = os.path.join(session_dir, fname)
+                cv2.imwrite(fpath, snap["frame"])
+                records.append({
+                    "rep":            int(snap["rep"]),
+                    "phase":          snap["phase"],
+                    "violation":      snap["violation_label"],
+                    "message":        snap["message"],
+                    "timestamp":      datetime.fromtimestamp(snap["timestamp"]).isoformat(),
+                    "image_path":     os.path.abspath(fpath),
+                })
+            log = {
+                "exercise":          ss.exercise,
+                "total_reps":        int(ss.rep_count),
+                "reps_with_errors":  reps_with_errors,
+                "reps_clean":        reps_clean,
+                "date":              datetime.now().isoformat(),
+                "snapshots":         records,
+            }
+            with open(os.path.join(session_dir, "session_log.json"), "w") as f:
+                json.dump(log, f, indent=2)
+            st.success(f"Saved to: `{os.path.abspath(session_dir)}`")
+    with col_retry:
+        if st.button("Try Again", use_container_width=True):
+            ss.snapshots               = []
+            ss.snapshot_keys           = set()
+            ss.show_snapshot_dashboard = False
+            ss.rep_count               = 0
+            ss.current_rep_errors      = []
+            ss.rep_log                 = []
+            ss.phase                   = _initial_phase()
+            ss.is_counting_down        = True
+            ss.countdown_start         = time.time()
+            ss.analysis_countdown      = True
+            ss.feedback                = f"Get ready — next set starts in {ss.countdown_duration}s"
+            ss.feedback_type           = "calib"
+            st.rerun()
+
+
 def _calib_done_dialog():
     st.markdown(
         '<div class="fb fb-ok"><i class="fa-solid fa-circle-check"></i>'
@@ -489,6 +616,9 @@ def _calib_done_dialog():
     col_a, col_b = st.columns(2)
     with col_a:
         if st.button("Re-calibrate", use_container_width=True):
+            ss.snapshots               = []
+            ss.snapshot_keys           = set()
+            ss.show_snapshot_dashboard = False
             ss.calib_mode                         = True
             ss.calib_reps_collected               = 0
             ss.calib_depths                       = []
@@ -526,6 +656,9 @@ def _calib_done_dialog():
             st.rerun()
     with col_b:
         if st.button("Begin Analysis", type="primary", use_container_width=True):
+            ss.snapshots               = []
+            ss.snapshot_keys           = set()
+            ss.show_snapshot_dashboard = False
             ss.rep_target           = rep_target_val
             ss.calib_just_completed = False
             ss.rep_count            = 0
@@ -563,6 +696,9 @@ def _set_done_dialog():
     col_a, col_b, col_c = st.columns(3)
     with col_a:
         if st.button("Same Set", use_container_width=True):
+            ss.snapshots              = []
+            ss.snapshot_keys          = set()
+            ss.show_snapshot_dashboard = False
             ss.rep_count          = 0
             ss.current_rep_errors = []
             ss.rep_log            = []
@@ -576,6 +712,9 @@ def _set_done_dialog():
             st.rerun()
     with col_b:
         if st.button("New Count", type="primary", use_container_width=True):
+            ss.snapshots              = []
+            ss.snapshot_keys          = set()
+            ss.show_snapshot_dashboard = False
             ss.rep_target         = new_target
             ss.rep_count          = 0
             ss.current_rep_errors = []
@@ -590,9 +729,43 @@ def _set_done_dialog():
             st.rerun()
     with col_c:
         if st.button("Finish", use_container_width=True):
-            ss.set_just_completed = False
-            ss.rep_target         = 0
+            ss.snapshots               = []
+            ss.snapshot_keys           = set()
+            ss.show_snapshot_dashboard = False
+            ss.set_just_completed      = False
+            ss.rep_target              = 0
+            ss.rep_count               = 0
+            ss.current_rep_errors      = []
+            ss.rep_log                 = []
+            ss.calib_ever_started      = False
+            ss.calib_mode              = False
+            ss.calib_just_completed    = False
+            ss.calib_reps_collected    = 0
+            ss.calib_depths            = []
+            ss.calib_depth             = None
+            ss.calib_peak              = 0.0
+            ss.calib_peak_torso        = 0.0
+            ss.calib_peak_knee         = 180.0
+            ss.calib_peak_signed_torso = 0.0
+            ss.calib_torso_angles      = []
+            ss.calib_knee_angles       = []
+            ss.calib_signed_torso_angles          = []
+            ss.calib_standing_signed_torso_angles = []
+            ss.calib_torso_angle                  = None
+            ss.calib_knee_angle                   = None
+            ss.calib_signed_torso_angle           = None
+            ss.calib_standing_signed_torso_angle  = None
+            ss.calib_hip_ankle_offsets = []
+            ss.calib_hip_ankle_offset  = None
+            ss.bottom_knee_ref         = 0.0
+            ss.dl_reached_lockout      = False
+            ss.ohp_bottom_ref          = 0.0
+            ss.phase                   = _initial_phase()
             st.rerun()
+    if st.button("Review Snapshots", use_container_width=True):
+        ss.set_just_completed      = False
+        ss.show_snapshot_dashboard = True
+        st.rerun()
 
 
 # SET STOPPED — user hit Stop mid-set
@@ -618,6 +791,9 @@ def _stopped_dialog():
     col_a, col_b = st.columns(2)
     with col_a:
         if st.button("Restart Analysis", type="primary", use_container_width=True):
+            ss.snapshots               = []
+            ss.snapshot_keys           = set()
+            ss.show_snapshot_dashboard = False
             ss.rep_target         = new_target
             ss.rep_count          = 0
             ss.current_rep_errors = []
@@ -632,6 +808,9 @@ def _stopped_dialog():
             st.rerun()
     with col_b:
         if st.button("Re-calibrate", use_container_width=True):
+            ss.snapshots               = []
+            ss.snapshot_keys           = set()
+            ss.show_snapshot_dashboard = False
             ss.set_stopped                        = False
             ss.calib_mode                         = True
             ss.calib_reps_collected               = 0
@@ -758,6 +937,7 @@ with st.sidebar:
         and not ss.calib_just_completed
         and not ss.set_just_completed
         and not ss.set_stopped
+        and not ss.show_snapshot_dashboard
     )
     if _analysis_active:
         st.markdown("<br>", unsafe_allow_html=True)
@@ -797,6 +977,10 @@ metric_fps   = col_fps.empty()
 st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 feedback_ph = st.empty()
 st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+if ss.scroll_to_top:
+    ss.scroll_to_top = False
+    st.components.v1.html("<script>parent.window.scrollTo(0, 0);</script>", height=0)
+
 video_ph = st.empty()
 
 if ss.calib_just_completed:
@@ -805,6 +989,10 @@ if ss.calib_just_completed:
 
 if ss.set_just_completed:
     _set_done_dialog()
+    st.stop()
+
+if ss.show_snapshot_dashboard:
+    _snapshot_dashboard()
     st.stop()
 
 if ss.set_stopped:
@@ -1007,6 +1195,23 @@ if webcam_active:
 
                     frame = draw_pose(frame, result, has_error)
                     frame = draw_hud(frame, ss.phase, ss.rep_count, ka, ta, ss.fps, w, h)
+
+                    if has_error and not ss.calib_mode and _top_error_type:
+                        snap_key = (ss.rep_count + 1, ss.phase, _top_error_type)
+                        if snap_key not in ss.snapshot_keys:
+                            ss.snapshot_keys.add(snap_key)
+                            snap_frame = frame.copy()
+                            v_label    = _VIOLATION_LABELS.get(_top_error_type, _top_error_type)
+                            _burn_annotation(snap_frame, v_label, ss.rep_count + 1, ss.phase)
+                            ss.snapshots.append({
+                                "frame":           snap_frame,
+                                "rep":             ss.rep_count + 1,
+                                "phase":           ss.phase,
+                                "violation_type":  _top_error_type,
+                                "violation_label": v_label,
+                                "message":         ss.feedback,
+                                "timestamp":       now,
+                            })
 
                     if ss.calib_mode:
                         frame = draw_calibration_bar(frame, ss.calib_reps_collected, 3, w, h)
