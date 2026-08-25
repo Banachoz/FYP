@@ -519,27 +519,9 @@ def _snapshot_dashboard():
             f"{reps_clean}/{ss.rep_count} clean, "
             f"{reps_with_errors}/{ss.rep_count} with errors**"
         )
-        by_rep = {}
-        for snap in ss.snapshots:
-            by_rep.setdefault(snap["rep"], []).append(snap)
-
-        for rep_num in sorted(by_rep):
-            st.markdown(f"---\n**Rep {rep_num}**")
-            snaps = by_rep[rep_num]
-            cols  = st.columns(min(len(snaps), 3))
-            for i, snap in enumerate(snaps):
-                with cols[i % 3]:
-                    rgb = cv2.cvtColor(snap["frame"], cv2.COLOR_BGR2RGB)
-                    st.image(rgb, use_container_width=True)
-                    st.caption(
-                        f"**{snap['violation_label']}**  \n"
-                        f"{snap['phase']}  \n"
-                        f"_{snap['message']}_"
-                    )
     else:
         st.success("No form errors detected — great work!")
 
-    st.markdown("---")
     col_save, col_retry = st.columns(2)
     with col_save:
         save_label = "Save Session" if ss.snapshots else "Save Log"
@@ -588,6 +570,25 @@ def _snapshot_dashboard():
             ss.feedback                = f"Get ready — next set starts in {ss.countdown_duration}s"
             ss.feedback_type           = "calib"
             st.rerun()
+
+    if ss.snapshots:
+        by_rep = {}
+        for snap in ss.snapshots:
+            by_rep.setdefault(snap["rep"], []).append(snap)
+
+        for rep_num in sorted(by_rep):
+            st.markdown(f"---\n**Rep {rep_num}**")
+            snaps = by_rep[rep_num]
+            cols  = st.columns(min(len(snaps), 3))
+            for i, snap in enumerate(snaps):
+                with cols[i % 3]:
+                    rgb = cv2.cvtColor(snap["frame"], cv2.COLOR_BGR2RGB)
+                    st.image(rgb, use_container_width=True)
+                    st.caption(
+                        f"**{snap['violation_label']}**  \n"
+                        f"{snap['phase']}  \n"
+                        f"_{snap['message']}_"
+                    )
 
 
 def _calib_done_dialog():
@@ -925,8 +926,10 @@ with st.sidebar:
             ss.feedback_type        = "calib"
     with col_r:
         if st.button("Reset", use_container_width=True):
+            current_exercise = ss.exercise
             for key in list(ss.keys()):
                 del ss[key]
+            st.session_state["exercise"] = current_exercise
             _init_state()
             st.rerun()
 
