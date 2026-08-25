@@ -4,7 +4,7 @@ DESCENT_THRESHOLD    = 0.03
 ASCENT_THRESHOLD     = 0.03
 STANDING_KNEE_MIN    = 165  # degrees — squat/deadlift "standing" check
 DEPTH_RATIO          = 0.90 # fraction of calibrated depth required before ascending is accepted, tracks hips
-SQUAT_DEPTH_KNEE_MIN = 140  # degrees — knee must reach this angle for a squat rep to count
+SQUAT_DEPTH_KNEE_MIN = 150  # degrees — knee must reach this angle for a squat rep to count
 OHP_ELBOW_LOCKOUT    = 165  # degrees — elbow fully extended overhead
 
 
