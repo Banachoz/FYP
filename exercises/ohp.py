@@ -5,14 +5,14 @@ from core.angle_calculator import (
 )
 
 RED_ZONES = {
-    "torso_angle_max": 30,  # OHP: some backward lean is expected; underreporting means ~35° physical
+    "torso_angle_max": 10,  # OHP: some backward lean is expected
 }
 
 DEVIATION_THRESHOLD         = 3   # degrees above calibrated peak lean — back arch during press
 STANDING_HYPEREXT_THRESHOLD =  5
 HIP_FORWARD_THRESHOLD       =  0.08
 HIP_ABSOLUTE_THRESHOLD      =  0.11
-CALIB_ARCH_THRESHOLD        =  6   # pre-calib absolute arch check
+CALIB_ARCH_THRESHOLD        =  5.5   # pre-calib absolute arch check
 WRIST_FORWARD_THRESHOLD     =  0.12 # wrists in front of shoulders at lockout, raise to make it looser
 WRIST_VIS_MIN               =  0.40 # MediaPipe visibility cutoff
 KNEE_BEND_THRESHOLD         = 173   # degrees — knees must stay near-straight during press
@@ -88,7 +88,7 @@ def analyze(landmarks, baseline, phase, rep_count=0):
 
     if ta > RED_ZONES["torso_angle_max"]:
         return [{
-            "type":     "red_zone_spine",
+            "type":     "red_zone_arch",
             "priority": 0,
             "severity": "critical",
             "message":  "CRITICAL — Severe back arch. Lower the bar immediately",
