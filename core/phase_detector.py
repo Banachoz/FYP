@@ -1,11 +1,10 @@
 import numpy as np
 
 DESCENT_THRESHOLD    = 0.03
-ASCENT_THRESHOLD     = 0.03
-STANDING_KNEE_MIN    = 165  # degrees — squat/deadlift "standing" check
+STANDING_KNEE_MIN    = 170  # degrees — squat/deadlift "standing" check
 DEPTH_RATIO          = 0.90 # fraction of calibrated depth required before ascending is accepted, tracks hips
 SQUAT_DEPTH_KNEE_MIN = 150  # degrees — knee must reach this angle for a squat rep to count
-OHP_ELBOW_LOCKOUT    = 165  # degrees — elbow fully extended overhead
+OHP_ELBOW_LOCKOUT    = 170  # degrees — elbow fully extended overhead
 
 
 def run_fsm(state: dict, tracked_y: float, knee_angle: float,
@@ -113,6 +112,7 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
                 # the starting reference). Only count if the user actually reached lockout
                 # (dl_reached_lockout) — guards against false reps from small hip bobs.
                 knee_ref = s["calib_knee_angle"] if s["calib_knee_angle"] is not None else s["bottom_knee_ref"]
+                knee_ref = min(knee_ref, 150.0)
                 if knee_ref > 0 and knee_angle <= knee_ref + 5:
                     s["dl_at_bottom"]  = False
                     s["asc_min_y"]     = tracked_y
@@ -122,20 +122,10 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
                     s["phase"]              = "ASCENDING"  # override STANDING set by _complete_rep
                     s["dl_reached_lockout"] = False  # reset for the next rep
             else:
-                # Position-based ascent detection: hip has risen 2% above the lowest
-                # point reached during descent. Works for slow reps where per-frame
-                # velocity never crosses the old ASCENT_THRESHOLD.
+                # Position-based ascent detection: hip has risen above the lowest
+                # point reached during descent.
                 bottom_ref = s["calib_peak"] if s["calib_mode"] else s["descent_max_y"]
-                if bottom_ref > 0 and tracked_y < bottom_ref - 0.02:
-                    if s["calib_depth"] is not None:
-                        required = s["standing_tracked_y"] + (
-                            (s["calib_depth"] - s["standing_tracked_y"]) * DEPTH_RATIO
-                        )
-                        if s["descent_max_y"] < required:
-                            s["feedback"]       = "Insufficient depth — go lower before ascending"
-                            s["feedback_type"]  = "warn"
-                            s["prev_tracked_y"] = tracked_y
-                            return s
+                if bottom_ref > 0 and tracked_y < bottom_ref - 0.03:
                     s["phase"]         = "ASCENDING"
                     s["asc_min_y"]     = tracked_y
                     s["descent_max_y"] = 0.0
