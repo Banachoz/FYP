@@ -28,31 +28,29 @@ _VIOLATION_LABELS = {
     "hip_forward":          "Hips Pushing Forward",
     "hip_forward_absolute": "Hips Pushing Forward",
     "hyperextension":       "Hyperextension",
-    "knee_travel":          "Excessive Knee Travel",
     "back_arch":            "Back Arch",
     "calib_arch":           "Back Arch",
     "wrist_too_forward":    "Bar Too Far Forward",
     "bar_too_far":          "Bar Drifting From Body",
     "shoulders_behind":     "Shoulders Behind Bar",
-    "hips_too_high":        "Hips Too High at Setup",
     "knee_bend":            "Leg Drive",
     "red_zone_spine":       "Critical Spine Danger",
+    "red_zone_arch":        "Critical Back Arch",
     "calib_hip":            "Hips Without Knee Bend",
 }
 
 _TTS_ERROR_MAP = {
     "red_zone_spine":       "Stop. Forward lean",
+    "red_zone_arch":        "Stop. Excessive back arch",
     "forward_rounding":     "Back rounding",
     "calib_lean":           "Back rounding",
     "hips_first":           "Hips rising first",
     "calib_hips_first":     "Hips rising first",
-    "knee_travel":          "Knees forward",
     "hip_forward":          "Hips pushing forward",
     "hip_forward_absolute": "Hips pushing forward",
     "calib_hip":            "Sit back and down",
     "hyperextension":       "Avoid hyperextension",
     "calib_depth":          "Go deeper",
-    "hips_too_high":        "Lower your hips",
     "shoulders_behind":     "Shoulders forward",
     "bar_too_far":          "Keep the bar close",
     "back_arch":            "Avoid back arch",
@@ -908,22 +906,29 @@ with st.sidebar:
     col_c, col_r = st.columns(2)
     with col_c:
         if st.button("Calibrate", use_container_width=True):
-            ss.calib_ever_started   = True
-            ss.calib_mode           = True
-            ss.calib_reps_collected = 0
-            ss.calib_depths         = []
-            ss.calib_depth          = None
-            ss.calib_peak           = 0.0
-            ss.bottom_knee_ref      = 0.0
-            ss.dl_reached_lockout   = False
-            ss.sq_descent_min_knee  = 180.0
-            ss.ohp_bottom_ref       = 0.0
-            ss.rep_count            = 0
-            ss.phase                = _initial_phase()
-            ss.is_counting_down     = True
-            ss.countdown_start      = time.time()
-            ss.feedback             = f"Get into position — calibration starts in {ss.countdown_duration}s"
-            ss.feedback_type        = "calib"
+            ss.calib_ever_started      = True
+            ss.calib_mode              = True
+            ss.calib_reps_collected    = 0
+            ss.calib_depths            = []
+            ss.calib_depth             = None
+            ss.calib_peak              = 0.0
+            ss.bottom_knee_ref         = 0.0
+            ss.dl_reached_lockout      = False
+            ss.sq_descent_min_knee     = 180.0
+            ss.ohp_bottom_ref          = 0.0
+            ss.rep_count               = 0
+            ss.phase                   = _initial_phase()
+            ss.is_counting_down        = True
+            ss.countdown_start         = time.time()
+            ss.feedback                = f"Get into position — calibration starts in {ss.countdown_duration}s"
+            ss.feedback_type           = "calib"
+            ss.calib_just_completed    = False
+            ss.set_just_completed      = False
+            ss.show_snapshot_dashboard = False
+            ss.snapshots               = []
+            ss.snapshot_keys           = set()
+            ss.rep_log                 = []
+            ss.current_rep_errors      = []
     with col_r:
         if st.button("Reset", use_container_width=True):
             current_exercise = ss.exercise
@@ -1190,10 +1195,14 @@ if webcam_active:
                             _spoken_depth_warning = True
                     else:
                         _spoken_depth_warning = False
-                    if has_error and not _spoken_this_phase and ss.voice_enabled:
+                    _is_critical = has_error and errors and errors[0].get("severity") == "critical"
+                    if has_error and (not _spoken_this_phase or _is_critical) and ss.voice_enabled:
                         cue = _TTS_ERROR_MAP.get(_top_error_type)
                         if cue:
-                            _tts.speak(cue)
+                            if _is_critical:
+                                _tts.speak_urgent(cue)
+                            else:
+                                _tts.speak(cue)
                             _spoken_this_phase = True
 
                     frame = draw_pose(frame, result, has_error)

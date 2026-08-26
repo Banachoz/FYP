@@ -1,7 +1,7 @@
 from core.angle_calculator import (
     torso_angle, signed_torso_angle, avg_knee_angle, hip_ankle_offset,
     facing_direction,
-    LEFT_HIP, RIGHT_HIP, LEFT_KNEE, RIGHT_KNEE, LEFT_ANKLE, RIGHT_ANKLE,
+    LEFT_HIP, RIGHT_HIP,
 )
 
 _dbg = 0  # frame counter for debug throttle
@@ -9,13 +9,13 @@ _dbg = 0  # frame counter for debug throttle
 # Torso angle measured from VERTICAL (0° = upright, 90° = parallel to floor).
 # Knee angle is the interior angle at the knee (180° = fully extended, ~70° = deep squat).
 RED_ZONES = {
-    "torso_angle_max": 65,   # torso nearly horizontal — spinal danger
+    "torso_angle_max": 55,   # torso nearly horizontal — spinal danger
 }
 
-DEVIATION_THRESHOLD          = 10    # degrees from personal baseline (descent checks)
+DEVIATION_THRESHOLD          = 10    # degrees from personal baseline (descent checks for back roudning & hips rising first during analysis)
 STANDING_HYPEREXT_THRESHOLD  =  6    # degrees — torso lean backward from calibrated standing
-HIP_FORWARD_THRESHOLD        =  0.08 # torso-normalised+aspect-corrected — ~5 cm push at 2 m (relative)
-HIP_ABSOLUTE_THRESHOLD       =  0.11 # torso-normalised+aspect-corrected — ~5 cm total lean (absolute)
+HIP_FORWARD_THRESHOLD        =  0.08 # analysis
+HIP_ABSOLUTE_THRESHOLD       =  0.11 # calibration
 
 
 def analyze(landmarks, baseline, phase, rep_count=0, bottom_ref_torso=None):  # noqa: C901
@@ -106,7 +106,7 @@ def analyze(landmarks, baseline, phase, rep_count=0, bottom_ref_torso=None):  # 
 
     # ── Absolute fallback checks (no personal baseline yet) ───────────────────
     if not baseline:
-        if phase == "DESCENDING" and ta > 45:
+        if phase == "DESCENDING" and ta > 30:
             errors.append({
                 "type":     "calib_lean",
                 "priority": 1,
@@ -114,7 +114,7 @@ def analyze(landmarks, baseline, phase, rep_count=0, bottom_ref_torso=None):  # 
                 "message":  "Back rounding on the way down — chest up, brace your core",
             })
         # Hip hinge without knee bend: valid in both phases
-        if phase == "DESCENDING" and ka > 140 and ta > 30:
+        if phase == "DESCENDING" and ka > 150 and ta > 25:
             errors.append({
                 "type":     "calib_hip",
                 "priority": 2,
@@ -122,7 +122,7 @@ def analyze(landmarks, baseline, phase, rep_count=0, bottom_ref_torso=None):  # 
                 "message":  "Hinging at hips without bending knees — sit back and down",
             })
         # Hips-first during calibration: torso still inclined on the way up
-        if phase == "ASCENDING" and ta > 40:
+        if phase == "ASCENDING" and ta > 35:
             errors.append({
                 "type":     "calib_hips_first",
                 "priority": 1,
@@ -160,16 +160,6 @@ def analyze(landmarks, baseline, phase, rep_count=0, bottom_ref_torso=None):  # 
                 "severity": "warning",
                 "message":  "Hips shooting up first — drive your chest and hips up together",
             })
-
-    knee_x  = (landmarks[LEFT_KNEE].x  + landmarks[RIGHT_KNEE].x)  / 2
-    ankle_x = (landmarks[LEFT_ANKLE].x + landmarks[RIGHT_ANKLE].x) / 2
-    if abs(knee_x - ankle_x) > 0.15:
-        errors.append({
-            "type":     "knee_travel",
-            "priority": 3,
-            "severity": "warning",
-            "message":  "Knees travelling too far forward — shift weight back to heels",
-        })
 
     errors.sort(key=lambda x: x["priority"])
     return errors
