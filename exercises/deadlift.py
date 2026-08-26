@@ -1,22 +1,21 @@
 from core.angle_calculator import (
     torso_angle, signed_torso_angle, hip_ankle_offset,
     shoulder_ankle_offset, wrist_shoulder_offset, facing_direction,
-    LEFT_HIP, RIGHT_HIP, LEFT_SHOULDER, RIGHT_SHOULDER,
     LEFT_WRIST, RIGHT_WRIST,
 )
 
 RED_ZONES = {
-    "torso_angle_max": 70,
+    "torso_angle_max": 60,
 }
 
-DEVIATION_THRESHOLD          = 10   # degrees — forward_rounding check
+DEVIATION_THRESHOLD          = 8   # degrees — forward_rounding check (calibration hips rising first & analysis back rounding)
 HIPS_FIRST_THRESHOLD         = 18   # degrees — hips_first needs more headroom at the bottom
 STANDING_HYPEREXT_THRESHOLD  =  8
 HIP_FORWARD_THRESHOLD        =  0.08
-HIP_ABSOLUTE_THRESHOLD       =  0.15
+HIP_ABSOLUTE_THRESHOLD       =  0.14
 SHOULDER_ANKLE_THRESHOLD     =  0.05  # torso-normalised
-WRIST_FORWARD_THRESHOLD      =  0.07  # torso-normalised — wrists must not be forward of shoulders (full side view)
-# WRIST_FORWARD_THRESHOLD      =  0.10  # torso-normalised — wrists must not be forward of shoulders (slightly facing cam)
+# WRIST_FORWARD_THRESHOLD      =  0.07  # torso-normalised — wrists must not be forward of shoulders (full side view)
+WRIST_FORWARD_THRESHOLD      =  0.10  # torso-normalised — wrists must not be forward of shoulders (slightly facing cam)
 WRIST_VIS_MIN                =  0.40  # MediaPipe visibility cutoff — side-view occludes wrists more often
 SETUP_TORSO_MIN              = 25     # degrees — gate for hip-shoulder height check at bottom
 
@@ -100,9 +99,6 @@ def analyze(landmarks, baseline, phase, rep_count=0, bottom_ref_torso=None):
     direction     = 1.0 if direction_ref >= 0 else -1.0
 
     if phase == "ASCENDING":
-        hip_y      = (landmarks[LEFT_HIP].y      + landmarks[RIGHT_HIP].y)      / 2
-        shoulder_y = (landmarks[LEFT_SHOULDER].y + landmarks[RIGHT_SHOULDER].y) / 2
-
         # Starting-position checks — only while the torso is still heavily inclined
         if ta > SETUP_TORSO_MIN:
             # Shoulders must not drift behind the bar (ankles used as bar-position proxy)
@@ -115,14 +111,6 @@ def analyze(landmarks, baseline, phase, rep_count=0, bottom_ref_torso=None):
                     "message":  "Shoulders behind the bar — keep shoulders over or in front of the bar",
                 })
 
-            # Hips must be lower than shoulders before the pull begins
-            if hip_y <= shoulder_y:
-                errors.append({
-                    "type":     "hips_too_high",
-                    "priority": 1,
-                    "severity": "warning",
-                    "message":  "Hips too high at setup — lower your hips before initiating the pull",
-                })
 
         # Bar drifting away from the body — wrists moving forward of the shoulders.
         # Gated on MediaPipe wrist visibility: side-view occlusion makes wrist tracking unreliable.
@@ -175,7 +163,7 @@ def analyze(landmarks, baseline, phase, rep_count=0, bottom_ref_torso=None):
                     "severity": "warning",
                     "message":  "Back rounding on the way down — maintain a neutral spine",
                 })
-        elif not baseline and ta > 55:
+        elif not baseline and ta > 35:
             errors.append({
                 "type":     "calib_lean",
                 "priority": 1,
