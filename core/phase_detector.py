@@ -2,7 +2,6 @@ import numpy as np
 
 DESCENT_THRESHOLD    = 0.03
 STANDING_KNEE_MIN    = 170  # degrees — squat/deadlift "standing" check
-DEPTH_RATIO          = 0.90 # fraction of calibrated depth required before ascending is accepted, tracks hips
 SQUAT_DEPTH_KNEE_MIN = 150  # degrees — knee must reach this angle for a squat rep to count
 OHP_ELBOW_LOCKOUT    = 170  # degrees — elbow fully extended overhead
 
@@ -20,8 +19,8 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
         calib_peak_signed_torso, calib_torso_angles, calib_knee_angles,
         calib_signed_torso_angles, calib_standing_signed_torso_angles,
         calib_torso_angle, calib_knee_angle, calib_signed_torso_angle,
-        calib_standing_signed_torso_angle, last_signed_torso_val,
-        feedback, feedback_type, depth_ratio, prev_tracked_y, standing_tracked_y
+        calib_standing_signed_torso_angle,
+        feedback, feedback_type, prev_tracked_y, standing_tracked_y
 
     Returns a copy of state with updated values plus 'needs_rerun' bool.
     OHP flow:  ASCENDING (press) → STANDING (lockout) → DESCENDING (lower) → ASCENDING
@@ -76,7 +75,6 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
                 s["standing_torso_buffer"] = []
                 s["standing_hao_buffer"]   = []
                 s["phase"]              = "DESCENDING"
-                s["dl_at_bottom"]       = False
                 s["standing_tracked_y"] = prev
                 s["standing_knee_max"]  = 0.0
                 s["sq_descent_min_knee"] = 180.0
@@ -92,7 +90,6 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
             s["feedback_type"] = "neutral"
             # Bar has returned to shoulder level → count rep, go back to ASCENDING
             if s["ohp_bottom_ref"] > 0 and tracked_y >= s["ohp_bottom_ref"] - 0.05:
-                s["ohp_bottom_ref"] = tracked_y  # refresh for next rep
                 s = _complete_rep(s, exercise)
                 s["phase"] = "ASCENDING"  # override STANDING set by _complete_rep
         else:
@@ -114,7 +111,6 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
                 knee_ref = s["calib_knee_angle"] if s["calib_knee_angle"] is not None else s["bottom_knee_ref"]
                 knee_ref = min(knee_ref, 150.0)
                 if knee_ref > 0 and knee_angle <= knee_ref + 5:
-                    s["dl_at_bottom"]  = False
                     s["asc_min_y"]     = tracked_y
                     s["descent_max_y"] = 0.0
                     if s["dl_reached_lockout"]:
@@ -188,12 +184,9 @@ def run_fsm(state: dict, tracked_y: float, knee_angle: float,
                 # Hip has dropped 4 % of frame from peak — genuine re-descent.
                 # Position-based so noise (~1 %) cannot trigger it.
                 s["phase"]              = "DESCENDING"
-                s["dl_at_bottom"]       = False
                 s["dl_reached_lockout"] = False  # never reached lockout this attempt
                 s["asc_min_y"]          = 99.0
 
-    s["last_signed_torso_val"]   = signed_torso_val
-    s["last_hip_ankle_offset"]   = hip_ankle_offset_val
     s["prev_tracked_y"] = tracked_y
     return s
 

@@ -18,7 +18,7 @@ WRIST_VIS_MIN               =  0.40 # MediaPipe visibility cutoff
 KNEE_BEND_THRESHOLD         = 173   # degrees — knees must stay near-straight during press
 
 
-def analyze(landmarks, baseline, phase, rep_count=0):
+def analyze(landmarks, baseline, phase):
     """
     Overhead press form analysis. Bar tracked via wrist Y.
     FSM: STANDING → ASCENDING (press) → DESCENDING (lower) → STANDING.

@@ -20,7 +20,7 @@ WRIST_VIS_MIN                =  0.40  # MediaPipe visibility cutoff — side-vie
 SETUP_TORSO_MIN              = 25     # degrees — gate for hip-shoulder height check at bottom
 
 
-def analyze(landmarks, baseline, phase, rep_count=0, bottom_ref_torso=None):
+def analyze(landmarks, baseline, phase, bottom_ref_torso=None):
     """
     Conventional deadlift form analysis. FSM starts in ASCENDING (user grips bar at bottom).
     Ankle used as bar-position proxy.

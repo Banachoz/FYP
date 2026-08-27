@@ -6,7 +6,6 @@ _SOUND_PATH = os.path.join(os.path.dirname(__file__), "..", "audio_cue", "osuhit
 
 class RepSound:
     def __init__(self):
-        self._mixer = None
         self._sound  = None
         self._ready  = False
         threading.Thread(target=self._load, daemon=True).start()

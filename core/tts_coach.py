@@ -26,21 +26,18 @@ class TTSCoach:
     def __init__(self):
         self._lock    = threading.Lock()
         self._pending = None
-        self._urgent  = False
         self._proc    = None
         self._event   = threading.Event()
-        self._stop    = threading.Event()
         self._thread  = threading.Thread(target=self._manager, daemon=True)
         self._thread.start()
 
     def _manager(self):
-        while not self._stop.is_set():
+        while True:
             if self._event.wait(timeout=0.5):
                 self._event.clear()
                 with self._lock:
                     text          = self._pending
                     self._pending = None
-                    self._urgent  = False
                 if text:
                     try:
                         proc = subprocess.Popen(
@@ -67,13 +64,9 @@ class TTSCoach:
         """Interrupt any current speech and speak text immediately."""
         with self._lock:
             self._pending = text
-            self._urgent  = True
             if self._proc is not None:
                 try:
                     self._proc.kill()
                 except Exception:
                     pass
         self._event.set()
-
-    def stop(self):
-        self._stop.set()

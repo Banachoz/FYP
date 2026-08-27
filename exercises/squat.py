@@ -1,7 +1,6 @@
 from core.angle_calculator import (
     torso_angle, signed_torso_angle, avg_knee_angle, hip_ankle_offset,
     facing_direction,
-    LEFT_HIP, RIGHT_HIP,
 )
 
 _dbg = 0  # frame counter for debug throttle
@@ -18,7 +17,7 @@ HIP_FORWARD_THRESHOLD        =  0.08 # analysis
 HIP_ABSOLUTE_THRESHOLD       =  0.11 # calibration
 
 
-def analyze(landmarks, baseline, phase, rep_count=0, bottom_ref_torso=None):  # noqa: C901
+def analyze(landmarks, baseline, phase, bottom_ref_torso=None):  # noqa: C901
     """
     Returns a priority-sorted list of form error dicts.
     Caller displays errors[0] in the feedback box; all errors are logged per rep.

@@ -50,7 +50,6 @@ _TTS_ERROR_MAP = {
     "hip_forward_absolute": "Hips pushing forward",
     "calib_hip":            "Sit back and down",
     "hyperextension":       "Avoid hyperextension",
-    "calib_depth":          "Go deeper",
     "shoulders_behind":     "Shoulders forward",
     "bar_too_far":          "Keep the bar close",
     "back_arch":            "Avoid back arch",
@@ -324,8 +323,6 @@ def _init_state():
         calib_knee_angle=None,
         calib_signed_torso_angle=None,
         calib_standing_signed_torso_angle=None,
-        last_signed_torso_val=0.0,
-        last_hip_ankle_offset=0.0,
         calib_hip_ankle_offsets=[],
         calib_hip_ankle_offset=None,
         completed_rep_label="",
@@ -346,7 +343,6 @@ def _init_state():
         pre_rep_standing_torso=0.0,
         pre_rep_standing_hao=0.0,
         bottom_knee_ref=0.0,
-        dl_at_bottom=False,
         dl_reached_lockout=False,
         sq_descent_min_knee=180.0,
         ohp_bottom_ref=0.0,
@@ -364,7 +360,6 @@ def _init_state():
         snapshots=[],
         snapshot_keys=set(),
         show_snapshot_dashboard=False,
-        scroll_to_top=False,
     )
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -411,8 +406,6 @@ def _pack_state():
         "calib_knee_angle":                   ss.calib_knee_angle,
         "calib_signed_torso_angle":           ss.calib_signed_torso_angle,
         "calib_standing_signed_torso_angle":  ss.calib_standing_signed_torso_angle,
-        "last_signed_torso_val":              ss.last_signed_torso_val,
-        "last_hip_ankle_offset":              ss.last_hip_ankle_offset,
         "calib_hip_ankle_offsets":            ss.calib_hip_ankle_offsets,
         "calib_hip_ankle_offset":             ss.calib_hip_ankle_offset,
         "completed_rep_label":                ss.completed_rep_label,
@@ -428,7 +421,6 @@ def _pack_state():
         "pre_rep_standing_torso": ss.pre_rep_standing_torso,
         "pre_rep_standing_hao":   ss.pre_rep_standing_hao,
         "bottom_knee_ref":        ss.bottom_knee_ref,
-        "dl_at_bottom":           ss.dl_at_bottom,
         "dl_reached_lockout":     ss.dl_reached_lockout,
         "sq_descent_min_knee":    ss.sq_descent_min_knee,
         "ohp_bottom_ref":         ss.ohp_bottom_ref,
@@ -453,8 +445,6 @@ def _unpack_state(result):
     ss.calib_knee_angle                   = result["calib_knee_angle"]
     ss.calib_signed_torso_angle           = result["calib_signed_torso_angle"]
     ss.calib_standing_signed_torso_angle  = result["calib_standing_signed_torso_angle"]
-    ss.last_signed_torso_val              = result["last_signed_torso_val"]
-    ss.last_hip_ankle_offset              = result["last_hip_ankle_offset"]
     ss.calib_hip_ankle_offsets            = result["calib_hip_ankle_offsets"]
     ss.calib_hip_ankle_offset             = result["calib_hip_ankle_offset"]
     ss.completed_rep_label                = result["completed_rep_label"]
@@ -470,7 +460,6 @@ def _unpack_state(result):
     ss.pre_rep_standing_torso = result["pre_rep_standing_torso"]
     ss.pre_rep_standing_hao   = result["pre_rep_standing_hao"]
     ss.bottom_knee_ref        = result["bottom_knee_ref"]
-    ss.dl_at_bottom           = result["dl_at_bottom"]
     ss.dl_reached_lockout     = result["dl_reached_lockout"]
     ss.sq_descent_min_knee    = result["sq_descent_min_knee"]
     ss.ohp_bottom_ref         = result["ohp_bottom_ref"]
@@ -634,8 +623,6 @@ def _calib_done_dialog():
             ss.calib_knee_angle                   = None
             ss.calib_signed_torso_angle           = None
             ss.calib_standing_signed_torso_angle  = None
-            ss.last_signed_torso_val              = 0.0
-            ss.last_hip_ankle_offset              = 0.0
             ss.calib_hip_ankle_offsets            = []
             ss.calib_hip_ankle_offset             = None
             ss.calib_just_completed               = False
@@ -827,8 +814,6 @@ def _stopped_dialog():
             ss.calib_knee_angle                   = None
             ss.calib_signed_torso_angle           = None
             ss.calib_standing_signed_torso_angle  = None
-            ss.last_signed_torso_val              = 0.0
-            ss.last_hip_ankle_offset              = 0.0
             ss.calib_hip_ankle_offsets            = []
             ss.calib_hip_ankle_offset             = None
             ss.calib_just_completed               = False
@@ -985,9 +970,6 @@ metric_fps   = col_fps.empty()
 st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 feedback_ph = st.empty()
 st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
-if ss.scroll_to_top:
-    ss.scroll_to_top = False
-    st.components.v1.html("<script>parent.window.scrollTo(0, 0);</script>", height=0)
 
 video_ph = st.empty()
 
@@ -1159,13 +1141,13 @@ if webcam_active:
                                 if ss.calib_mode and ss.calib_signed_torso_angles
                                 else ss.calib_peak_signed_torso if ss.calib_mode else None
                             )
-                            errors = _squat.analyze(lms, baseline, ss.phase, ss.rep_count,
+                            errors = _squat.analyze(lms, baseline, ss.phase,
                                                     bottom_ref_torso=_sq_ref)
                         elif ss.exercise == "Deadlift":
-                            errors = _deadlift.analyze(lms, baseline, ss.phase, ss.rep_count,
+                            errors = _deadlift.analyze(lms, baseline, ss.phase,
                                                        bottom_ref_torso=ss.calib_peak_signed_torso if ss.calib_mode else None)
                         else:
-                            errors = _ohp.analyze(lms, baseline, ss.phase, ss.rep_count)
+                            errors = _ohp.analyze(lms, baseline, ss.phase)
                         if errors:
                             _top_error_type  = errors[0]["type"]
                             ss.feedback      = errors[0]["message"]
