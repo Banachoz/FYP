@@ -283,6 +283,7 @@ st.markdown(
 
     .calib-bar-wrap { background: var(--border); border-radius: 2px; height: 4px; width: 100%; margin-top: 8px; }
     .calib-bar-fill { height: 4px; border-radius: 2px; background: var(--accent); transition: width 0.3s ease; }
+
     </style>
     """,
     unsafe_allow_html=True,
@@ -594,7 +595,7 @@ def _calib_done_dialog():
             st.markdown(f":{color}[{icon} {entry}]")
         errors_in_calib = sum(1 for e in calib_entries if "Good form" not in e)
         if errors_in_calib >= 2:
-            st.warning("Form errors in 2+ calibration reps — consider re-calibrating with better form.")
+            st.warning("Form errors in more than 2 calibration rep. Please consider re-calibrating with better form.")
     st.markdown("---")
     rep_target_val = st.number_input(
         "Target reps per set (0 = unlimited)",
@@ -996,6 +997,12 @@ if not ss.calib_ever_started:
         unsafe_allow_html=True,
     )
     webcam_active = False
+    with st.expander("Camera Setup Tips"):
+        st.markdown(
+            "- Position the camera at approximately **hip height**\n"
+            "- Stand at a distance where your **full body is visible** in the frame\n"
+            "- Face **slightly toward the camera** rather than fully sideways"
+        )
 else:
     stop_col, _ = st.columns([1, 5])
     with stop_col:

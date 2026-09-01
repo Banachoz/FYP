@@ -13,7 +13,7 @@ STANDING_HYPEREXT_THRESHOLD =  5
 HIP_FORWARD_THRESHOLD       =  0.08
 HIP_ABSOLUTE_THRESHOLD      =  0.11
 CALIB_ARCH_THRESHOLD        =  5.5   # pre-calib absolute arch check
-WRIST_FORWARD_THRESHOLD     =  0.12 # wrists in front of shoulders at lockout, raise to make it looser
+WRIST_FORWARD_THRESHOLD     =  0.10 # wrists in front of shoulders at lockout, raise to make it looser
 WRIST_VIS_MIN               =  0.40 # MediaPipe visibility cutoff
 KNEE_BEND_THRESHOLD         = 173   # degrees — knees must stay near-straight during press
 
